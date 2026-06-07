@@ -23,6 +23,18 @@ class PS_PlayableContainer
 		m_eDamageState = playableComponent.GetDamageState();
 	}
 
+	void InitFromSlotData(PS_SlotCharacterData slot)
+	{
+		m_RplId = slot.m_RplId;
+		m_sName = slot.m_sName;
+		m_FactionKey = slot.m_FactionKey;
+		m_eCharacterRank = slot.m_eCharacterRank;
+		m_sRoleIconPath = slot.m_sRoleIconPath;
+		m_sRoleIconQuad = slot.m_sRoleIconQuad;
+		m_sRoleName = slot.m_sRoleName;
+		m_eDamageState = slot.m_eDamageState;
+	}
+
 	// -------------------------- Replication ----------------------------
 	static bool Extract(PS_PlayableContainer instance, ScriptCtx ctx, SSnapSerializerBase snapshot)
 	{

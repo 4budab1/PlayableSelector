@@ -31,5 +31,17 @@ PS_GameModeCoop PS_GameMode_Lobby1 : "{9C2001FE7A2F2281}Prefabs/MP/Modes/PS_Game
   }
  }
 }
-HitRegistrationManager HitRegManager1 : "{0EDA3D48791120DD}Prefabs/MP/HitRegManager.et" {
+$grp SCR_AIGroup : "{BC357974A560F678}Prefabs/Groups/BLUFOR/Group_US_RifleSquad_p.et" {
+ {
+  coords 4413.297 6.183 11084.853
+  m_bSetPlayable 1
+ }
+ {
+  coords 4420.796 1.594 11085.042
+  m_bSetPlayable 1
+ }
+ {
+  coords 4414.214 1.594 11081.715
+  m_bSetPlayable 1
+ }
 }

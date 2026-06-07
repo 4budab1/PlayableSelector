@@ -15,7 +15,7 @@ class PS_VoiceChatList : SCR_ScriptedWidgetComponent
 	// Global cached
 	protected PlayerManager m_gPlayerManager;
 	protected PS_PlayableManager m_gPlayableManager;
-	protected PS_VoNRoomsManager m_gVoNRoomsManager;
+	protected PS_VoNChannelsManager m_gVoNChannelsManager;
 	protected PlayerController m_pPlayerController;
 	protected int m_iPlayerId;
 	protected int m_iPublicRoomId;
@@ -37,19 +37,19 @@ class PS_VoiceChatList : SCR_ScriptedWidgetComponent
 		// global
 		m_gPlayerManager   = GetGame().GetPlayerManager();
 		m_gPlayableManager = PS_PlayableManager.GetInstance();
-		m_gVoNRoomsManager = PS_VoNRoomsManager.GetInstance();
+		m_gVoNChannelsManager = PS_VoNChannelsManager.GetInstance();
 		
 		// local
 		m_wRoomsList = VerticalLayoutWidget.Cast(w.FindAnyWidget("RoomsList"));
 		
-		m_gVoNRoomsManager.m_eOnRoomChanged.Insert(MovePlayer);
+		m_gVoNChannelsManager.m_eOnRoomChanged.Insert(MovePlayer);
 		
 		m_pPlayerController = GetGame().GetPlayerController();
 		m_iPlayerId = m_pPlayerController.GetPlayerId();
 		m_sCurrentFactionKey = m_gPlayableManager.GetPlayerFactionKey(m_iPlayerId);
-		m_iPublicRoomId = m_gVoNRoomsManager.GetRoomWithFaction("", "#PS-VoNRoom_Public" + m_iPlayerId.ToString());
+		m_iPublicRoomId = m_gVoNChannelsManager.GetRoomWithFaction("", "#PS-VoNRoom_Public" + m_iPlayerId.ToString());
 		
-		if (m_gVoNRoomsManager)
+		if (m_gVoNChannelsManager)
 			Rebuild();
 		
 		GetGame().GetCallqueue().CallLater(UpdateInfo, 100, true);
@@ -60,12 +60,12 @@ class PS_VoiceChatList : SCR_ScriptedWidgetComponent
 		if (!GetGame().InPlayMode())
 			return;
 		
-		if (!m_gVoNRoomsManager)
+		if (!m_gVoNChannelsManager)
 			return;
-		if (!m_gVoNRoomsManager.m_eOnRoomChanged)
+		if (!m_gVoNChannelsManager.m_eOnRoomChanged)
 			return;
 		
-		m_gVoNRoomsManager.m_eOnRoomChanged.Remove(MovePlayer);
+		m_gVoNChannelsManager.m_eOnRoomChanged.Remove(MovePlayer);
 	}
 	
 	private int m_iOldPlayersCount = 0;
@@ -81,34 +81,43 @@ class PS_VoiceChatList : SCR_ScriptedWidgetComponent
 	void Rebuild()
 	{
 		Clear();
+
+		PS_DebugLogger.LogImportant("VoN Rebuild BEGIN playerId=" + m_iPlayerId.ToString() + " faction=" + m_sCurrentFactionKey);
 		
 		// Create initial list of visible rooms
 		array<int> visibleRooms = new array<int>();
 		GetVisibleRooms(visibleRooms);
+		PS_DebugLogger.LogImportant("VoN Rebuild visibleRooms count=" + visibleRooms.Count().ToString());
 		foreach (int roomId : visibleRooms)
 		{
+			string name = m_gVoNChannelsManager.GetRoomName(roomId);
+			PS_DebugLogger.LogImportant("VoN Rebuild creating room id=" + roomId.ToString() + " name=" + name);
 			CreateRoom(roomId);
 		}
-		
+
 		UpdateInfo();
 	}
 	
 	void CreateRoomIfNeed(int roomId)
 	{
-		if (m_gVoNRoomsManager.IsPublicRoom(roomId))
-			CreateRoom(roomId);
+		if (roomId < 0) return;
+		string roomKey = m_gVoNChannelsManager.GetRoomName(roomId);
+		if (roomKey == "") return;
+		if (m_gVoNChannelsManager.IsNoSoundChannel(roomKey)) return;
+		if (roomKey.Contains("#PS-VoNRoom_Local") && !roomKey.EndsWith(m_iPlayerId.ToString())) return;
+		CreateRoom(roomId);
 	}
 	
 	void CreateRoom(int roomId)
 	{
-		VoNRoomKey roomKey = m_gVoNRoomsManager.GetRoomName(roomId);
+		string roomKey = m_gVoNChannelsManager.GetRoomName(roomId);
 		if (roomKey == "") return;
 		Widget roomWidget = GetGame().GetWorkspace().CreateWidgets(m_sVoiceChatRoomPrefab);
 		PS_VoiceChatRoom voiceChatRoom = PS_VoiceChatRoom.Cast(roomWidget.FindHandler(PS_VoiceChatRoom));
 		voiceChatRoom.SetRoomId(roomId);
 		
 		array<int> playersInRoom = new array<int>();
-		m_gVoNRoomsManager.GetPlayersInRoom(playersInRoom, roomId);
+		m_gVoNChannelsManager.GetPlayersInRoom(playersInRoom, roomId);
 		foreach (int playerId : playersInRoom)
 		{
 			voiceChatRoom.AddPlayer(playerId);
@@ -120,21 +129,21 @@ class PS_VoiceChatList : SCR_ScriptedWidgetComponent
 	
 	void RemoveRoomIfNeed(int roomId)
 	{
-		if (m_gVoNRoomsManager.IsGlobalRoom(roomId)) return;
-		if (m_gVoNRoomsManager.IsLocalRoom(roomId)) return;
+		if (m_gVoNChannelsManager.IsGlobalRoom(roomId)) return;
+		if (m_gVoNChannelsManager.IsLocalRoom(roomId)) return;
 		
 		// current player
-		if (m_gVoNRoomsManager.IsPublicRoom(roomId))
+		if (m_gVoNChannelsManager.IsPublicRoom(roomId))
 		{
 			if (m_iPublicRoomId != roomId)
 			{
 				array<int> playersInRoom = new array<int>();
-				m_gVoNRoomsManager.GetPlayersInRoom(playersInRoom, roomId);
+				m_gVoNChannelsManager.GetPlayersInRoom(playersInRoom, roomId);
 				if (playersInRoom.IsEmpty())
 					RemoveRoom(roomId);
 			}
 		} else {
-			if (!m_gVoNRoomsManager.IsFactionRoom(roomId, m_sCurrentFactionKey) && m_gVoNRoomsManager.GetPlayerRoom(m_iPlayerId) != roomId)
+			if (!m_gVoNChannelsManager.IsFactionRoom(roomId, m_sCurrentFactionKey) && m_gVoNChannelsManager.GetPlayerRoom(m_iPlayerId) != roomId)
 			{
 				RemoveRoom(roomId);
 			}
@@ -151,7 +160,6 @@ class PS_VoiceChatList : SCR_ScriptedWidgetComponent
 	
 	void SwitchFaction(FactionKey factionKey)
 	{
-		if (m_sCurrentFactionKey == factionKey) return;
 		m_sCurrentFactionKey = factionKey;
 		Rebuild();
 	}
@@ -171,9 +179,18 @@ class PS_VoiceChatList : SCR_ScriptedWidgetComponent
 		}
 		if (!m_wRooms.Contains(roomId))
 			CreateRoomIfNeed(roomId);
-		else
+		else if (playerId >= 0)
 		{
 			m_wRooms[roomId].AddPlayer(playerId);
+		}
+		
+		// ensure all visible rooms exist (catch rooms created server-side but no player moved to yet)
+		array<int> visibleRooms = {};
+		GetVisibleRooms(visibleRooms);
+		foreach (int vr : visibleRooms)
+		{
+			if (vr >= 0 && !m_wRooms.Contains(vr))
+				CreateRoom(vr);
 		}
 		
 		UpdateInfo();
@@ -196,109 +213,158 @@ class PS_VoiceChatList : SCR_ScriptedWidgetComponent
 	// -------------------- Extra lobby functions --------------------
 	void GetVisibleRooms(out array<int> outRoomsArray)
 	{
-		// global
 		PS_GameModeCoop gameMode = PS_GameModeCoop.Cast(GetGame().GetGameMode());
 		PlayerManager playerManager = GetGame().GetPlayerManager();
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
-		PS_VoNRoomsManager VoNRoomsManager = PS_VoNRoomsManager.GetInstance();
+		PS_VoNChannelsManager VoNChannelsManager = PS_VoNChannelsManager.GetInstance();
 		SCR_EGameModeState gameState = gameMode.GetState();
-		
-		// current player
+
 		PlayerController currentPlayerController = GetGame().GetPlayerController();
 		int currentPlayerId = currentPlayerController.GetPlayerId();
-		EPlayerRole currentPlayerRole = playerManager.GetPlayerRoles(currentPlayerController.GetPlayerId());
-		FactionKey currentPlayerFactionKey = m_sCurrentFactionKey;
-		
-		if (gameState != SCR_EGameModeState.BRIEFING)
+
+		RplId playerSlot = playableManager.GetPlayableByPlayer(currentPlayerId);
+		bool isSpectator = (gameState == SCR_EGameModeState.GAME && playerSlot == RplId.Invalid());
+		bool isLobby = (gameState == SCR_EGameModeState.PREGAME || gameState == SCR_EGameModeState.SLOTSELECTION);
+
+		FactionKey actualPlayerFaction = playableManager.GetPlayerFactionKey(currentPlayerId);
+		FactionKey currentPlayerFactionKey;
+		bool isPreview = (gameState == SCR_EGameModeState.PREGAME);
+		if (isLobby && !isPreview)
 		{
-			// Local room if you want some privacy
-			int localRoom = VoNRoomsManager.GetRoomWithFaction("", "#PS-VoNRoom_Local" + currentPlayerId.ToString());
-			outRoomsArray.Insert(localRoom);
-			
-			// Global room
-			int globalRoom = VoNRoomsManager.GetRoomWithFaction("", "#PS-VoNRoom_Global");
-			outRoomsArray.Insert(globalRoom);
-			
+			if (actualPlayerFaction != "")
+				currentPlayerFactionKey = actualPlayerFaction;
+			else
+				currentPlayerFactionKey = m_sCurrentFactionKey;
+		}
+		else if (isSpectator)
+		{
+			currentPlayerFactionKey = actualPlayerFaction;
+		}
+		else
+		{
+			currentPlayerFactionKey = actualPlayerFaction;
+		}
+		if (currentPlayerFactionKey == "")
+			currentPlayerFactionKey = m_sCurrentFactionKey;
+		m_sCurrentFactionKey = currentPlayerFactionKey;
+
+		if (isLobby && !isPreview)
+		{
 			if (currentPlayerFactionKey != "")
 			{
-				// Faction localRoom
-				int factionRoom = VoNRoomsManager.GetRoomWithFaction(currentPlayerFactionKey, "#PS-VoNRoom_Faction");
-				outRoomsArray.Insert(factionRoom);
-				
-				// Room for commanders
-				int commandRoom = VoNRoomsManager.GetRoomWithFaction(currentPlayerFactionKey, "#PS-VoNRoom_Command");
+				int localRoom = VoNChannelsManager.GetRoomWithFaction("", "#PS-VoNRoom_Local" + currentPlayerId.ToString());
+				if (localRoom >= 0) outRoomsArray.Insert(localRoom);
+
+				int commandRoom = VoNChannelsManager.GetOrCreateRoomWithFaction(currentPlayerFactionKey, "#PS-VoNRoom_Command");
 				outRoomsArray.Insert(commandRoom);
+
+				array<PS_PlayableContainer> playables = playableManager.GetPlayablesSorted();
+				for (int i = 0; i < playables.Count(); i++)
+				{
+					PS_PlayableContainer playable = playables[i];
+					FactionKey fk = playable.GetFactionKey();
+					if (currentPlayerFactionKey != fk) continue;
+					int groupCallSign = playableManager.GetGroupCallsignByPlayable(playable.GetRplId());
+					int groupRoom = VoNChannelsManager.GetOrCreateRoomWithFaction(fk, groupCallSign.ToString());
+					if (!outRoomsArray.Contains(groupRoom))
+						outRoomsArray.Insert(groupRoom);
+				}
 			}
-			
-			// Room for each group
-			array<PS_PlayableContainer> playables = playableManager.GetPlayablesSorted();
-			for (int i = 0; i < playables.Count(); i++) {
-				PS_PlayableContainer playable = playables[i];
-				SCR_Faction faction = playable.GetFaction();
-				FactionKey factionKey = faction.GetFactionKey();
-				
-				if (currentPlayerFactionKey != factionKey) continue; // not our faction, skip
-				
-				int groupCallSign = playableManager.GetGroupCallsignByPlayable(playable.GetRplId());
-				int groupRoom = VoNRoomsManager.GetRoomWithFaction(currentPlayerFactionKey, groupCallSign.ToString()); // No creation here :[
-				if (!outRoomsArray.Contains(groupRoom))
+		}
+		else if (isPreview)
+		{
+			int localRoom = VoNChannelsManager.GetRoomWithFaction("", "#PS-VoNRoom_Local" + currentPlayerId.ToString());
+			if (localRoom >= 0) outRoomsArray.Insert(localRoom);
+
+			int globalRoom = VoNChannelsManager.GetOrCreateRoomWithFaction("", "#PS-VoNRoom_Global");
+			outRoomsArray.Insert(globalRoom);
+
+			int publicRoom = VoNChannelsManager.GetRoomWithFaction("", "#PS-VoNRoom_Public" + currentPlayerId.ToString());
+			if (publicRoom >= 0) outRoomsArray.Insert(publicRoom);
+		}
+		else if (gameState == SCR_EGameModeState.BRIEFING)
+		{
+			if (currentPlayerFactionKey != "")
+			{
+				int factionRoom = VoNChannelsManager.GetOrCreateRoomWithFaction(currentPlayerFactionKey, "#PS-VoNRoom_Faction");
+				outRoomsArray.Insert(factionRoom);
+
+				int commandRoom = VoNChannelsManager.GetOrCreateRoomWithFaction(currentPlayerFactionKey, "#PS-VoNRoom_Command");
+				outRoomsArray.Insert(commandRoom);
+
+				RplId playableId = playableManager.GetPlayableByPlayer(currentPlayerId);
+				if (playableId != RplId.Invalid())
+				{
+					int groupCallSign = playableManager.GetGroupCallsignByPlayable(playableId);
+					int groupRoom = VoNChannelsManager.GetOrCreateRoomWithFaction(currentPlayerFactionKey, groupCallSign.ToString());
 					outRoomsArray.Insert(groupRoom);
+				}
 			}
-			
-			// Player public room
-			int publicRoom = VoNRoomsManager.GetRoomWithFaction("", "#PS-VoNRoom_Public" + currentPlayerId.ToString());
-			outRoomsArray.Insert(publicRoom);
-			
-			// Other players public rooms
-			array<int> playersPublicRooms = new array<int>();
-			VoNRoomsManager.GetPlayersPublicRooms(playersPublicRooms);
+		}
+		else if (gameState == SCR_EGameModeState.GAME && isSpectator)
+		{
+			int localRoom = VoNChannelsManager.GetRoomWithFaction("", "#PS-VoNRoom_Local" + currentPlayerId.ToString());
+			if (localRoom >= 0) outRoomsArray.Insert(localRoom);
+
+			int globalRoom = VoNChannelsManager.GetOrCreateRoomWithFaction("", "#PS-VoNRoom_Global");
+			outRoomsArray.Insert(globalRoom);
+
+			int publicRoom = VoNChannelsManager.GetRoomWithFaction("", "#PS-VoNRoom_Public" + currentPlayerId.ToString());
+			if (publicRoom >= 0) outRoomsArray.Insert(publicRoom);
+
+			array<int> playersPublicRooms = {};
+			VoNChannelsManager.GetPlayersPublicRooms(playersPublicRooms);
 			foreach (int roomId : playersPublicRooms)
 			{
 				if (!outRoomsArray.Contains(roomId))
 					outRoomsArray.Insert(roomId);
 			}
-		} else {
-			// For briefing only command and my group
+		}
+		else
+		{
+			int localRoom = VoNChannelsManager.GetRoomWithFaction("", "#PS-VoNRoom_Local" + currentPlayerId.ToString());
+			if (localRoom >= 0) outRoomsArray.Insert(localRoom);
+
+			int globalRoom = VoNChannelsManager.GetOrCreateRoomWithFaction("", "#PS-VoNRoom_Global");
+			outRoomsArray.Insert(globalRoom);
+
 			if (currentPlayerFactionKey != "")
 			{
-				// Room for commanders
-				int commandRoom = VoNRoomsManager.GetRoomWithFaction(currentPlayerFactionKey, "#PS-VoNRoom_Command");
-				outRoomsArray.Insert(commandRoom);
-			}
-			
-			if (playableManager.IsPlayerGroupLeader(currentPlayerId))
-			{
-				// TODO: separate to method
-				// Room for each group
-				array<PS_PlayableContainer> playables = playableManager.GetPlayablesSorted();
-				for (int i = 0; i < playables.Count(); i++) {
-					PS_PlayableContainer playable = playables[i];
-					FactionKey factionKey = playable.GetFactionKey();
-					
-					if (currentPlayerFactionKey != factionKey) continue; // not our faction, skip
-					
-					int groupCallSign = playableManager.GetGroupCallsignByPlayable(playable.GetRplId());
-					int groupRoom = VoNRoomsManager.GetRoomWithFaction(currentPlayerFactionKey, groupCallSign.ToString()); // No creation here :[
-					if (!outRoomsArray.Contains(groupRoom))
-						outRoomsArray.Insert(groupRoom);
-				}
-			} else {
-				RplId playableId = playableManager.GetPlayableByPlayer(currentPlayerId);
-				if (playableId != RplId.Invalid())
+				int factionRoom = VoNChannelsManager.GetRoomWithFaction(currentPlayerFactionKey, "#PS-VoNRoom_Faction");
+				if (factionRoom >= 0) outRoomsArray.Insert(factionRoom);
+
+				int commandRoom = VoNChannelsManager.GetRoomWithFaction(currentPlayerFactionKey, "#PS-VoNRoom_Command");
+				if (commandRoom >= 0) outRoomsArray.Insert(commandRoom);
+
+				RplId myPlayableId = playableManager.GetPlayableByPlayer(currentPlayerId);
+				if (myPlayableId != RplId.Invalid())
 				{
-					PS_PlayableContainer playable = playableManager.GetPlayableById(playableId);
-					int groupCallSign = playableManager.GetGroupCallsignByPlayable(playable.GetRplId());
-					int groupRoom = VoNRoomsManager.GetRoomWithFaction(currentPlayerFactionKey, groupCallSign.ToString());
-					outRoomsArray.Insert(groupRoom);
+					int myGroupCallSign = playableManager.GetGroupCallsignByPlayable(myPlayableId);
+					int myGroupRoom = VoNChannelsManager.GetRoomWithFaction(currentPlayerFactionKey, myGroupCallSign.ToString());
+					if (myGroupRoom >= 0 && !outRoomsArray.Contains(myGroupRoom))
+						outRoomsArray.Insert(myGroupRoom);
 				}
+			}
+
+			int publicRoom = VoNChannelsManager.GetRoomWithFaction("", "#PS-VoNRoom_Public" + currentPlayerId.ToString());
+			if (publicRoom >= 0) outRoomsArray.Insert(publicRoom);
+
+			array<int> playersPublicRooms = {};
+			VoNChannelsManager.GetPlayersPublicRooms(playersPublicRooms);
+			foreach (int roomId : playersPublicRooms)
+			{
+				if (!outRoomsArray.Contains(roomId))
+					outRoomsArray.Insert(roomId);
 			}
 		}
-		
-		// Current room if something gone wrong
-		int currentRoom = VoNRoomsManager.GetPlayerRoom(currentPlayerId);
-		if (!outRoomsArray.Contains(currentRoom))
-			outRoomsArray.Insert(currentRoom);
-		
+
+		int currentRoom = VoNChannelsManager.GetPlayerRoom(currentPlayerId);
+		if (currentRoom >= 0 && !outRoomsArray.Contains(currentRoom))
+		{
+			string currentRoomName = VoNChannelsManager.GetRoomName(currentRoom);
+			if (!VoNChannelsManager.IsNoSoundChannel(currentRoomName))
+				outRoomsArray.Insert(currentRoom);
+		}
 	}
 	
 	void SetSelectedPlayer(int playerId)

@@ -14,6 +14,18 @@ class PS_MissionDescriptionHeadersListUI : ScriptedWidgetComponent
 			return;
 		m_wRoot = w;
 		GetGame().GetCallqueue().CallLater(FillList, false, 0);
+		
+		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
+		if (playableManager)
+			playableManager.GetOnFactionChange().Insert(OnFactionChanged);
+	}
+	
+	void OnFactionChanged(int playerId, FactionKey factionKey, FactionKey factionKeyOld)
+	{
+		int currentPlayerId = GetGame().GetPlayerController().GetPlayerId();
+		if (playerId != currentPlayerId)
+			return;
+		GetGame().GetCallqueue().CallLater(FillList, false, 0);
 	}
 	
 	void FillList()
@@ -21,6 +33,8 @@ class PS_MissionDescriptionHeadersListUI : ScriptedWidgetComponent
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 		if (!playableManager)
 			return;
+		
+		SCR_WidgetHelper.RemoveAllChildren(m_vMissionDescriptionList);
 		
 		PlayerController currentPlayerController = GetGame().GetPlayerController();
 		int currentPlayerId = currentPlayerController.GetPlayerId();

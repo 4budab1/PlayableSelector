@@ -6,7 +6,7 @@ class PS_VoiceChatRoom : SCR_ScriptedWidgetComponent
 	// Global cached
 	protected PlayerManager m_gPlayerManager;
 	protected PS_PlayableManager m_gPlayableManager;
-	protected PS_VoNRoomsManager m_gVoNRoomsManager;
+	protected PS_VoNChannelsManager m_gVoNChannelsManager;
 	
 	// Local
 	int m_iRoomId;
@@ -26,7 +26,7 @@ class PS_VoiceChatRoom : SCR_ScriptedWidgetComponent
 		// global
 		m_gPlayerManager   = GetGame().GetPlayerManager();
 		m_gPlayableManager = PS_PlayableManager.GetInstance();
-		m_gVoNRoomsManager = PS_VoNRoomsManager.GetInstance();
+		m_gVoNChannelsManager = PS_VoNChannelsManager.GetInstance();
 		
 		// local
 		m_hRoomHandler = PS_VoiceRoomHeader.Cast(w.FindAnyWidget("VoiceRoomHeader").FindHandler(PS_VoiceRoomHeader));
@@ -46,14 +46,17 @@ class PS_VoiceChatRoom : SCR_ScriptedWidgetComponent
 	{
 		m_iRoomId = roomId;
 		
-		string roomName = m_gVoNRoomsManager.GetRoomName(roomId);
+		string roomName = m_gVoNChannelsManager.GetRoomName(roomId);
 		FactionKey factionKey = "";
 		if (roomName == "") roomName = "Room not registered on server";
 		else {
 			array<string> outTokens = new array<string>();
 			roomName.Split("|", outTokens, false);
-			factionKey = outTokens[0];
-			roomName = outTokens[1];
+			if (outTokens.Count() >= 2)
+			{
+				factionKey = outTokens[0];
+				roomName = outTokens[1];
+			}
 		}
 		SCR_FactionManager factionManager = SCR_FactionManager.Cast(GetGame().GetFactionManager());
 		SCR_Faction faction = SCR_Faction.Cast(factionManager.GetFactionByKey(factionKey));

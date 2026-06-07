@@ -88,6 +88,8 @@ class PS_CoopLobby : MenuBase
 	// Vars
 	protected ref map<SCR_Faction, PS_FactionSelector> m_mFactions = new map<SCR_Faction, PS_FactionSelector>();
 	protected ref map<SCR_AIGroup, PS_RolesGroup> m_mGroups = new map<SCR_AIGroup, PS_RolesGroup>();
+	protected ref map<int, PS_RolesGroup> m_mGroupsById = new map<int, PS_RolesGroup>();
+	protected ref map<int, FactionKey> m_mGroupFactionKeys = new map<int, FactionKey>();
 	protected SCR_Faction m_CurrentFaction = null;
 	protected int m_iSelectedPlayer;
 	
@@ -174,6 +176,7 @@ class PS_CoopLobby : MenuBase
 		
 		// Events
 		m_PlayableManager.GetOnFactionChange().Insert(UpdatePlayerFaction);
+		m_PlayableManager.GetOnPlayerPlayableChange().Insert(OnPlayerPlayableChangeVoiceChat);
 		m_PlayableManager.GetOnStartTimerCounterChanged().Insert(OnStartTimerCounterChanged);
 		m_PlayableManager.GetOnPlayerConnected().Insert(OnPlayerConnected);
 		m_PlayableManager.GetOnPlayerDisconnected().Insert(OnPlayerDisconnected);
@@ -194,6 +197,20 @@ class PS_CoopLobby : MenuBase
 		
 		// Init
 		Init();
+		
+		if (!m_CurrentFaction && m_mFactions.Count() > 0)
+		{
+			foreach (SCR_Faction f, PS_FactionSelector _ : m_mFactions)
+			{
+				m_CurrentFaction = f;
+				break;
+			}
+			if (m_CurrentFaction)
+			{
+				SwitchCurrentFaction(m_CurrentFaction);
+				m_VoiceChatList.SwitchFaction(m_CurrentFaction.GetFactionKey());
+			}
+		}
 	}
 	
 	override void OnMenuUpdate(float tDelta)
@@ -219,6 +236,7 @@ class PS_CoopLobby : MenuBase
 		if (m_PlayableManager)
 		{
 			m_PlayableManager.GetOnFactionChange().Remove(UpdatePlayerFaction);
+			m_PlayableManager.GetOnPlayerPlayableChange().Remove(OnPlayerPlayableChangeVoiceChat);
 			m_PlayableManager.GetOnStartTimerCounterChanged().Remove(OnStartTimerCounterChanged);
 			m_PlayableManager.GetOnPlayerConnected().Remove(OnPlayerConnected);
 			m_PlayableManager.GetOnPlayerDisconnected().Remove(OnPlayerDisconnected);
@@ -237,26 +255,27 @@ class PS_CoopLobby : MenuBase
 	
 	void InitPlayables()
 	{
-		array<PS_PlayableContainer> playables = m_PlayableManager.GetPlayablesSorted();
-		map<RplId, ref PS_PlayableVehicleContainer> playableVehicles = m_PlayableManager.GetPlayableVehicles();
+		PS_DebugLogger.LogImportant("InitPlayables slotMapSize=" + m_PlayableManager.GetSlots().Count().ToString() + " sortedCacheSize=" + m_PlayableManager.GetSortedSlotIds().Count().ToString());
+		map<RplId, ref PS_VehicleData> playableVehicles = m_PlayableManager.GetVehicles().GetRawMap();
 		map<SCR_Faction, ref Tuple3<int, int, int>> factions = new map<SCR_Faction, ref Tuple3<int, int, int>>();
-		
-		foreach (PS_PlayableContainer playable : playables)
+
+		foreach (RplId slotId : m_PlayableManager.GetSortedSlotIds())
 		{
-			AddPlayable(playable);
-			
-			int playerId = m_PlayableManager.GetPlayerByPlayable(playable.GetRplId());
+			PS_SlotCharacterData slot;
+			if (!m_PlayableManager.FindSlotData(slotId, slot))
+				continue;
+			AddPlayable(slot);
+
 			int playerAdded = 0;
 			int playerAddedMax = 1;
 			int playerAddedLocked = 0;
-			if (playerId >= 0)
+			if (slot.m_PlayerId >= 0)
 				playerAdded = 1;
-			if (playerId == -2)
+			if (slot.m_IsLocked)
 				playerAddedLocked = 1;
-			
-			SCR_Faction faction = playable.GetFaction();
+
+			SCR_Faction faction = slot.GetFaction();
 			if (!factions.Contains(faction))
-				//DRG_BUG
 				factions.Insert(faction, new Tuple3<int, int, int>(playerAdded, playerAddedMax, playerAddedLocked));
 			else
 			{
@@ -266,10 +285,12 @@ class PS_CoopLobby : MenuBase
 				tuple.param3 += playerAddedLocked;
 			}
 		}
-		
-		foreach (RplId rplId, PS_PlayableVehicleContainer playableVehicleContainer : playableVehicles)
+
+		foreach (RplId rplId, PS_VehicleData vehicleData : playableVehicles)
 		{
-			AddPlayableVehicle(playableVehicleContainer);
+			PS_PlayableVehicleContainer container = new PS_PlayableVehicleContainer();
+			container.Init(vehicleData.m_RplId, vehicleData.m_PrefabPath, vehicleData.m_IconPath, 0, vehicleData.m_GroupId, vehicleData.m_FactionKey);
+			AddPlayableVehicle(container);
 		}
 		
 		foreach (SCR_Faction faction, Tuple3<int, int, int> count : factions)
@@ -278,18 +299,62 @@ class PS_CoopLobby : MenuBase
 		}
 		
 		// Added in runtime
-		m_PlayableManager.GetOnPlayableRegistered().Remove(OnPlayableRegistered);
-		m_PlayableManager.GetOnPlayableRegistered().Insert(OnPlayableRegistered);
+		m_PlayableManager.GetCallbackHandler().GetOnSlotInserted().Remove(OnSlotInserted);
+		m_PlayableManager.GetCallbackHandler().GetOnSlotInserted().Insert(OnSlotInserted);
 	}
 	
 	void InitPlayers()
 	{
-		m_PlayersList.SetLobbyMenu(this);
-		m_PlayersList.InitPlayers();
+		if (m_PlayersList)
+			m_PlayersList.InitPlayers();
 	}
-	
-	// --------------------------------------------------------------------------------------------------------------------------------
-	// Add
+
+	void AddPlayableVehicle(PS_PlayableVehicleContainer vehicleContainer)
+	{
+		int groupId = vehicleContainer.m_iGroupId;
+		SCR_GroupsManagerComponent groupsManager = SCR_GroupsManagerComponent.GetInstance();
+		SCR_AIGroup playableGroup = groupsManager.FindGroup(groupId);
+		PS_RolesGroup rolesGroup;
+		if (!m_mGroups.Contains(playableGroup))
+		{
+			return;
+		}
+		else rolesGroup = m_mGroups.Get(playableGroup);
+		rolesGroup.InsertVehicle(vehicleContainer);
+	}
+
+	void AddPlayable(PS_SlotCharacterData slot)
+	{
+		PS_PlayableContainer playable = m_PlayableManager.GetPlayableById(slot.m_RplId);
+		if (!playable)
+		{
+			playable = new PS_PlayableContainer();
+			playable.InitFromSlotData(slot);
+		}
+		SCR_AIGroup playableGroup = m_PlayableManager.GetPlayerGroupByPlayable(slot.m_RplId);
+		PS_RolesGroup rolesGroup;
+		if (playableGroup && m_mGroups.Contains(playableGroup))
+			rolesGroup = m_mGroups.Get(playableGroup);
+		else if (m_mGroupsById.Contains(slot.m_PlayerGroupId))
+			rolesGroup = m_mGroupsById.Get(slot.m_PlayerGroupId);
+
+		if (!rolesGroup)
+		{
+			Widget rolesGroupRoot = m_wWorkspaceWidget.CreateWidgets(m_sRolesGroupPrefab, m_wRolesList);
+			rolesGroup = PS_RolesGroup.Cast(rolesGroupRoot.FindHandler(PS_RolesGroup));
+			rolesGroup.SetLobbyMenu(this);
+			rolesGroup.SetAIGroup(playableGroup);
+			if (playableGroup)
+				m_mGroups.Insert(playableGroup, rolesGroup);
+			m_mGroupsById.Insert(slot.m_PlayerGroupId, rolesGroup);
+			m_mGroupFactionKeys.Insert(slot.m_PlayerGroupId, slot.m_FactionKey);
+
+			SCR_Faction faction = slot.GetFaction();
+			rolesGroupRoot.SetVisible(m_CurrentFaction == faction);
+		}
+		rolesGroup.InsertPlayable(playable);
+	}
+
 	void AddFaction(SCR_Faction faction, int count, int maxCount, int lockedCount)
 	{
 		Widget factionSelectorRoot = m_wWorkspaceWidget.CreateWidgets(m_sFactionSelectorPrefab, m_wFactionList);
@@ -302,38 +367,7 @@ class PS_CoopLobby : MenuBase
 		factionSelector.SetToggled(m_CurrentFaction == faction);
 		m_mFactions.Insert(faction, factionSelector);
 	}
-	
-	void AddPlayableVehicle(PS_PlayableVehicleContainer playableVehicleContainer)
-	{
-		SCR_AIGroup playableGroup = m_PlayableManager.GetPlayerGroupByVehicle(playableVehicleContainer);
-		PS_RolesGroup rolesGroup;
-		if (!m_mGroups.Contains(playableGroup))
-		{
-			return;
-		}
-		else rolesGroup = m_mGroups.Get(playableGroup);
-		rolesGroup.InsertVehicle(playableVehicleContainer);
-	}
-	
-	void AddPlayable(PS_PlayableContainer playable)
-	{
-		SCR_AIGroup playableGroup = m_PlayableManager.GetPlayerGroupByPlayable(playable.GetRplId());
-		PS_RolesGroup rolesGroup;
-		if (!m_mGroups.Contains(playableGroup))
-		{
-			Widget rolesGroupRoot = m_wWorkspaceWidget.CreateWidgets(m_sRolesGroupPrefab, m_wRolesList);
-			rolesGroup = PS_RolesGroup.Cast(rolesGroupRoot.FindHandler(PS_RolesGroup));
-			rolesGroup.SetLobbyMenu(this);
-			rolesGroup.SetAIGroup(playableGroup);
-			m_mGroups.Insert(playableGroup, rolesGroup);
-		
-			SCR_Faction faction = playable.GetFaction();
-			rolesGroupRoot.SetVisible(m_CurrentFaction == faction);
-		}
-		else rolesGroup = m_mGroups.Get(playableGroup);
-		rolesGroup.InsertPlayable(playable);
-	}
-	
+
 	void AddPlayer(int playerId)
 	{
 		
@@ -391,7 +425,26 @@ class PS_CoopLobby : MenuBase
 				break;
 			}
 		}
+		if (!fold)
+		{
+			foreach (int groupId, PS_RolesGroup rolesGroup : m_mGroupsById)
+			{
+				if (!rolesGroup.GetRootWidget().IsVisible())
+					continue;
+				if (!rolesGroup.IsFolded())
+				{
+					fold = true;
+					break;
+				}
+			}
+		}
 		foreach (SCR_AIGroup aIGroup, PS_RolesGroup rolesGroup : m_mGroups)
+		{
+			if (!rolesGroup.GetRootWidget().IsVisible())
+				continue;
+			rolesGroup.SetFolded(fold);
+		}
+		foreach (int groupId, PS_RolesGroup rolesGroup : m_mGroupsById)
 		{
 			if (!rolesGroup.GetRootWidget().IsVisible())
 				continue;
@@ -411,41 +464,61 @@ class PS_CoopLobby : MenuBase
 				break;
 			}
 		}
+		if (!fold)
+		{
+			foreach (int groupId, PS_RolesGroup rolesGroup : m_mGroupsById)
+			{
+				if (!rolesGroup.GetRootWidget().IsVisible())
+					continue;
+				if (!rolesGroup.IsFolded())
+				{
+					fold = true;
+					break;
+				}
+			}
+		}
 		if (fold)
 			m_wRolesFoldButtonImage.LoadImageFromSet(0, IMAGESET_PS, "Fold");
 		else
 			m_wRolesFoldButtonImage.LoadImageFromSet(0, IMAGESET_PS, "Unfold");
 	}
 	
-	void OnPlayableRegistered(RplId playableId, PS_PlayableContainer playable)
+	void OnSlotInserted(RplId slotId, int joinableGroupId, FactionKey factionKey)
 	{
-		SCR_Faction faction = playable.GetFaction();
+		PS_SlotCharacterData slot;
+		if (!m_PlayableManager.FindSlotData(slotId, slot))
+			return;
+		SCR_Faction faction = slot.GetFaction();
 		if (!m_mFactions.Contains(faction))
 		{
 			AddFaction(faction, 0, 1, 0);
 		}
 		else
 			AddFactionCount(faction, 0, 1, 0);
-		AddPlayable(playable);
+		AddPlayable(slot);
 	}
 	
 	void OnRolesGroupRemoved(PS_RolesGroup rolesGroup)
 	{
-		m_mGroups.Remove(m_mGroups.GetKeyByValue(rolesGroup));
+		m_mGroups.Remove(SCR_MapHelper<SCR_AIGroup, PS_RolesGroup>.GetKeyByValue(m_mGroups, rolesGroup));
+		int key = SCR_MapHelper<int, PS_RolesGroup>.GetKeyByValue(m_mGroupsById, rolesGroup);
+		m_mGroupsById.Remove(key);
 	}
 	
-	void OnPlayableRemoved(PS_PlayableContainer playable)
+	void OnPlayableRemoved(RplId slotId, FactionKey factionKey, int playerId)
 	{
-		SCR_Faction faction = playable.GetFaction();
-		
-		int playerId = m_PlayableManager.GetPlayerByPlayable(playable.GetRplId());
+		PS_SlotCharacterData slot;
+		if (!m_PlayableManager.FindSlotData(slotId, slot))
+			return;
+		SCR_Faction faction = slot.GetFaction();
+
 		int playerAdded = 0;
 		int lockedAdded = 0;
-		if (playerId >= 0)
+		if (slot.m_PlayerId >= 0)
 			playerAdded = -1;
-		if (playerId == -2)
+		if (slot.m_IsLocked)
 			lockedAdded = -1;
-		
+
 		AddFactionCount(faction, playerAdded, -1, lockedAdded);
 	}
 	
@@ -493,14 +566,22 @@ class PS_CoopLobby : MenuBase
 			bool factionSelected = m_CurrentFaction == groupFaction;
 			rolesGroup.GetRootWidget().SetVisible(factionSelected);
 		}
+
+		foreach (int groupId, PS_RolesGroup rolesGroup : m_mGroupsById)
+		{
+			FactionKey factionKey = m_mGroupFactionKeys.Get(groupId);
+			SCR_Faction groupFaction = SCR_Faction.Cast(m_FactionManager.GetFactionByKey(factionKey));
+			bool factionSelected = m_CurrentFaction == groupFaction;
+			rolesGroup.GetRootWidget().SetVisible(factionSelected);
+		}
 		
 		m_wRolesScroll.SetSliderPos(0, 0);
 		OnRolesFold(null);
 	}
 	
-	void SetPreviewPlayableVehicle(PS_PlayableVehicleContainer playableVehicleContainer, bool openInventory)
+	void SetPreviewPlayableVehicle(PS_PlayableVehicleContainer vehicleData, bool openInventory)
 	{
-		m_LobbyLoadoutPreview.SetPreviewPlayableVehicle(playableVehicleContainer, openInventory);
+		m_LobbyLoadoutPreview.SetPreviewPlayableVehicle(vehicleData, openInventory);
 	}
 	void SetPreviewPlayable(RplId playableId, bool openInventory)
 	{
@@ -510,7 +591,7 @@ class PS_CoopLobby : MenuBase
 			if (playableId == RplId.Invalid())
 				return;
 		}
-		string prefabName = m_PlayableManager.GetPlayablePrefab(playableId);
+		ResourceName prefabName = m_PlayableManager.GetSlotCharacterPrefabPath(playableId);
 		m_LobbyLoadoutPreview.SetPreviewPlayable(playableId, prefabName, openInventory);
 	}
 	
@@ -520,6 +601,11 @@ class PS_CoopLobby : MenuBase
 			return;
 		
 		SwitchVoiceChatFaction(factionKey);
+	}
+	
+	void OnPlayerPlayableChangeVoiceChat(int playerId, RplId slotId)
+	{
+		m_VoiceChatList.Rebuild();
 	}
 	
 	void SwitchVoiceChatFaction(FactionKey factionKey)

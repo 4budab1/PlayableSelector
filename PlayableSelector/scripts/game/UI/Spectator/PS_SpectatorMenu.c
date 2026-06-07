@@ -79,19 +79,94 @@ class PS_SpectatorMenu: MenuBase
 			m_SelectedLabel.SetSelected(true);
 	}
 	
+	protected vector m_vDeadBodyPosition;
+
+	IEntity FindPlayableEntityById(RplId rplId)
+	{
+		PS_PlayableComponent playableComp = PS_PlayableComponent.Cast(Replication.FindItem(rplId));
+		if (playableComp)
+			return playableComp.GetOwner();
+		return null;
+	}
+
 	bool SetCameraCharacter(RplId rplId)
 	{
+		PS_DebugLogger.LogImportant("Spectator SetCameraCharacter rplId=" + rplId.ToString());
+		IEntity characterEntity;
+
 		RplComponent rplComponent = RplComponent.Cast(Replication.FindItem(rplId));
-		if (!rplComponent)
-			return false;
-		IEntity characterEntity = rplComponent.GetEntity();
+		if (rplComponent)
+		{
+			characterEntity = rplComponent.GetEntity();
+		}
+		else
+		{
+			PS_DebugLogger.LogImportant("Spectator SetCameraCharacter Replication.FindItem failed, trying player controller");
+			int targetPlayerId = m_PlayableManager.GetPlayerByPlayable(rplId);
+			if (targetPlayerId > 0)
+			{
+				IEntity controlledEntity = GetGame().GetPlayerManager().GetPlayerControlledEntity(targetPlayerId);
+				if (controlledEntity)
+				{
+					PS_LobbyVoNComponent vonCheck = PS_LobbyVoNComponent.Cast(controlledEntity.FindComponent(PS_LobbyVoNComponent));
+					if (vonCheck)
+						PS_DebugLogger.LogImportant("Spectator SetCameraCharacter player controller returned VoN boi at " + controlledEntity.GetOrigin().ToString());
+					else
+					{
+						PS_DebugLogger.LogImportant("Spectator SetCameraCharacter found entity via player controller pid=" + targetPlayerId.ToString());
+						characterEntity = controlledEntity;
+					}
+				}
+				if (!characterEntity)
+				{
+					IEntity worldEntity = FindPlayableEntityById(rplId);
+					if (worldEntity)
+					{
+						PS_DebugLogger.LogImportant("Spectator SetCameraCharacter found entity via world search rplId=" + rplId.ToString());
+						characterEntity = worldEntity;
+					}
+					else
+					{
+						int spectatorId = GetGame().GetPlayerController().GetPlayerId();
+						if (targetPlayerId == spectatorId)
+						{
+							PlayerController spectatorPc = GetGame().GetPlayerController();
+							PS_PlayableControllerComponent pcc = PS_PlayableControllerComponent.Cast(spectatorPc.FindComponent(PS_PlayableControllerComponent));
+							if (pcc)
+							{
+								vector observerPos = pcc.GetObserverPosition();
+								if (observerPos != "0 0 0")
+								{
+									PS_DebugLogger.LogImportant("Spectator SetCameraCharacter using observer position " + observerPos.ToString());
+									MoveCamera(observerPos);
+									return true;
+								}
+							}
+						}
+					}
+				}
+			}
+			if (!characterEntity)
+			{
+				PS_DebugLogger.LogError("Spectator SetCameraCharacter FAIL: no entity for rplId=" + rplId.ToString());
+				return false;
+			}
+		}
 		if (m_GameMode.GetFriendliesSpectatorOnly())
 		{
-			PS_PlayableContainer playableContainer = m_PlayableManager.GetPlayableById(rplId);
-			FactionKey playableFactionKey = playableContainer.GetFactionKey();
-			FactionKey lastPlayerFaction = m_PlayableManager.GetPlayerFactionKeyRemembered(GetGame().GetPlayerController().GetPlayerId());
-			if (playableFactionKey != lastPlayerFaction)
-				return false;
+			int spectatorId = GetGame().GetPlayerController().GetPlayerId();
+			RplId spectatorSlot = m_PlayableManager.GetPlayableByPlayer(spectatorId);
+			if (spectatorSlot != RplId.Invalid())
+			{
+				PS_PlayableContainer playableContainer = m_PlayableManager.GetPlayableById(rplId);
+				FactionKey playableFactionKey = playableContainer.GetFactionKey();
+				FactionKey lastPlayerFaction = m_PlayableManager.GetPlayerFactionKeyRemembered(spectatorId);
+				if (playableFactionKey != lastPlayerFaction)
+				{
+					PS_DebugLogger.LogImportant("Spectator SetCameraCharacter SKIP: faction mismatch playable=" + playableFactionKey + " spectator=" + lastPlayerFaction);
+					return false;
+				}
+			}
 		}
 		PS_ManualCameraSpectator camera = PS_ManualCameraSpectator.Cast(GetGame().GetCameraManager().CurrentCamera());
 		if (camera)
@@ -104,17 +179,37 @@ class PS_SpectatorMenu: MenuBase
 	
 	bool SetCameraMoveCharacter(RplId rplId)
 	{
+		IEntity characterEntity;
+
 		RplComponent rplComponent = RplComponent.Cast(Replication.FindItem(rplId));
-		if (!rplComponent)
-			return false;
-		IEntity characterEntity = rplComponent.GetEntity();
+		if (rplComponent)
+		{
+			characterEntity = rplComponent.GetEntity();
+		}
+		else
+		{
+			int targetPlayerId = m_PlayableManager.GetPlayerByPlayable(rplId);
+			if (targetPlayerId > 0)
+			{
+				IEntity controlledEntity = GetGame().GetPlayerManager().GetPlayerControlledEntity(targetPlayerId);
+				if (controlledEntity)
+					characterEntity = controlledEntity;
+			}
+			if (!characterEntity)
+				return false;
+		}
 		if (m_GameMode.GetFriendliesSpectatorOnly())
 		{
-			PS_PlayableContainer playableContainer = m_PlayableManager.GetPlayableById(rplId);
-			FactionKey playableFactionKey = playableContainer.GetFactionKey();
-			FactionKey lastPlayerFaction = m_PlayableManager.GetPlayerFactionKeyRemembered(GetGame().GetPlayerController().GetPlayerId());
-			if (playableFactionKey != lastPlayerFaction)
-				return false;
+			int spectatorId = GetGame().GetPlayerController().GetPlayerId();
+			RplId spectatorSlot = m_PlayableManager.GetPlayableByPlayer(spectatorId);
+			if (spectatorSlot != RplId.Invalid())
+			{
+				PS_PlayableContainer playableContainer = m_PlayableManager.GetPlayableById(rplId);
+				FactionKey playableFactionKey = playableContainer.GetFactionKey();
+				FactionKey lastPlayerFaction = m_PlayableManager.GetPlayerFactionKeyRemembered(spectatorId);
+				if (playableFactionKey != lastPlayerFaction)
+					return false;
+			}
 		}
 		PS_ManualCameraSpectator camera = PS_ManualCameraSpectator.Cast(GetGame().GetCameraManager().CurrentCamera());
 		if (camera)
@@ -161,6 +256,9 @@ class PS_SpectatorMenu: MenuBase
 		m_wSidesRatioFrame = GetRootWidget().FindAnyWidget("SidesRatioFrame");
 		m_wSidesRatio = GetRootWidget().FindAnyWidget("SidesRatio");
 		m_wGameTimerText = TextWidget.Cast(GetRootWidget().FindAnyWidget("GameTimerText"));
+		
+		if (m_hVoiceChatList)
+			m_hVoiceChatList.Rebuild();
 		
 		m_bNavigationSwitchSpectatorUI = SCR_InputButtonComponent.Cast(GetRootWidget().FindAnyWidget("NavigationSwitchSpectatorUI").FindHandler(SCR_InputButtonComponent));
 		m_bNavigationSwitchSpectatorUI.m_OnClicked.Insert(Action_SwitchSpectatorUI);
@@ -292,7 +390,7 @@ class PS_SpectatorMenu: MenuBase
 			contextMenu.ActionDetachFrom(character).Insert(OnActionDetachFrom);
 		contextMenu.ActionLookAt(character).Insert(OnActionLookAt);
 		contextMenu.ActionFirstPersonView(character).Insert(OnActionFirstPersonView);
-		contextMenu.ActionRespawnInPlace(playableComponent.GetId(), playerId);
+		contextMenu.ActionRespawnInPlace(playableComponent.GetRplId(), playerId);
 		if (playerId > 0)
 		{
 			contextMenu.ActionKick(playerId);

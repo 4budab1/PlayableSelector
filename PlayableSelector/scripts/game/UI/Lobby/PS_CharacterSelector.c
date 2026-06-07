@@ -79,16 +79,9 @@ class PS_CharacterSelector : SCR_ButtonComponent
 	{
 		super.HandlerAttached(w);
 		
-		// Cache global
+		// Cache global (stuff not depending on PlayerController)
 		m_GameModeCoop = PS_GameModeCoop.Cast(GetGame().GetGameMode());
 		m_PlayableManager = PS_PlayableManager.GetInstance();
-		m_PlayerController = GetGame().GetPlayerController();
-		if (!m_PlayerController)
-			return;
-		m_iCurrentPlayerId = m_PlayerController.GetPlayerId();
-		m_FactionManager = SCR_FactionManager.Cast(GetGame().GetFactionManager());
-		m_PlayerManager = GetGame().GetPlayerManager();
-		m_PlayableControllerComponent = PS_PlayableControllerComponent.Cast(m_PlayerController.FindComponent(PS_PlayableControllerComponent));
 		
 		// Widgets
 		m_wCharacterFactionColor = ImageWidget.Cast(w.FindAnyWidget("CharacterFactionColor"));
@@ -104,24 +97,47 @@ class PS_CharacterSelector : SCR_ButtonComponent
 		m_VoiceHideableButton = PS_VoiceButton.Cast(m_wVoiceHideableButton.FindHandler(PS_VoiceButton));
 		
 		// Buttons
-		//m_OnClicked.Insert(OnClicked);
 		m_OnHover.Insert(OnHover);
 		m_OnHoverLeave.Insert(OnHoverLeave);
 		m_StateButtonBaseComponent.m_OnClicked.Insert(OnStateClicked);
 		
-		// Events
-		m_PlayableControllerComponent.GetOnPlayerRoleChange().Insert(OnRoleChangeCurrent);
+		// Events (from PlayableManager — always available)
 		m_PlayableManager.GetOnPlayerPlayableChange().Insert(OnPlayerPlayableChange);
+		m_PlayableManager.GetOnPlayerStateChange().Insert(OnStateChange);
+		m_PlayableManager.GetOnPlayerPinChange().Insert(UpdatePined);
+		m_PlayableManager.GetOnPlayerConnected().Insert(OnConnected);
 	}
 	
 	override void HandlerDeattached(Widget w)
 	{
-		if (m_PlayableControllerComponent)
-			m_PlayableControllerComponent.GetOnPlayerRoleChange().Remove(OnRoleChangeCurrent);
+		PS_PlayableControllerComponent pcc = GetControllerComp();
+		if (pcc)
+			pcc.GetOnPlayerRoleChange().Remove(OnRoleChangeCurrent);
 		if (m_PlayableManager)
 		{
 			m_PlayableManager.GetOnPlayerPlayableChange().Remove(OnPlayerPlayableChange);
+			m_PlayableManager.GetOnPlayerStateChange().Remove(OnStateChange);
+			m_PlayableManager.GetOnPlayerPinChange().Remove(UpdatePined);
+			m_PlayableManager.GetOnPlayerConnected().Remove(OnConnected);
 		}
+	}
+	
+	// --------------------------------------------------------------------------------------------------------------------------------
+	// Helpers
+	PS_PlayableControllerComponent GetControllerComp()
+	{
+		PlayerController pc = GetGame().GetPlayerController();
+		if (!pc)
+			return null;
+		return PS_PlayableControllerComponent.Cast(pc.FindComponent(PS_PlayableControllerComponent));
+	}
+	
+	int GetCurrentPlayerId()
+	{
+		PlayerController pc = GetGame().GetPlayerController();
+		if (!pc)
+			return -1;
+		return pc.GetPlayerId();
 	}
 	
 	// --------------------------------------------------------------------------------------------------------------------------------
@@ -140,35 +156,49 @@ class PS_CharacterSelector : SCR_ButtonComponent
 	{
 		m_PlayableContainer = playableContainer;
 		m_iPlayableId = playableContainer.GetRplId();
-		
-		// Temp
-		m_Faction = m_PlayableContainer.GetFaction();
-		m_sFactionKey = m_Faction.GetFactionKey();
-		
-		// Initial setup
-		m_PlayableContainer.SetIconTo(m_wUnitIcon);
-		m_wCharacterFactionColor.SetColor(m_Faction.GetFactionColor());
 		m_iPlayerId = m_PlayableManager.GetPlayerByPlayable(m_iPlayableId);
-		if (m_iPlayerId > 0)
-			m_bDisconnected = !m_PlayerManager.IsPlayerConnected(m_iPlayerId);
-		m_iDamageState = playableContainer.GetDamageState();
-		m_wCharacterClassName.SetText(m_PlayableContainer.GetName());
+		
+		// Visual setup — safe fallbacks if container data not available on client
+		m_sFactionKey = "";
+		if (m_PlayableContainer)
+		{
+			m_Faction = m_PlayableContainer.GetFaction();
+			if (m_Faction)
+				m_sFactionKey = m_Faction.GetFactionKey();
+			
+			if (m_wUnitIcon)
+				m_PlayableContainer.SetIconTo(m_wUnitIcon);
+			if (m_wCharacterFactionColor && m_Faction)
+				m_wCharacterFactionColor.SetColor(m_Faction.GetFactionColor());
+			if (m_wCharacterClassName)
+				m_wCharacterClassName.SetText(m_PlayableContainer.GetName());
+		}
+		
+		// Fallback: get faction key from slot data if container failed
+		if (m_sFactionKey == "" && m_PlayableManager)
+		{
+			PS_SlotCharacterData slotData;
+			if (m_PlayableManager.FindSlotData(m_iPlayableId, slotData))
+				m_sFactionKey = slotData.m_FactionKey;
+		}
+		
+		PlayerManager playerManager = GetGame().GetPlayerManager();
+		if (m_iPlayerId > 0 && playerManager)
+			m_bDisconnected = !playerManager.IsPlayerConnected(m_iPlayerId);
 		m_iPlayableCallsign = m_PlayableManager.GetGroupCallsignByPlayable(m_iPlayableId);
 		m_sPlayableCallsign = m_iPlayableCallsign.ToString();
-		m_bDead = m_iDamageState == EDamageState.DESTROYED;
 		
 		UpdatePlayer(0, m_iPlayerId);
 		UpdateStateIcon();
 		
-		// Events
-		m_PlayableContainer.GetOnPlayerChange().Insert(UpdatePlayer);
-		m_PlayableContainer.GetOnDamageStateChanged().Insert(UpdateDammage);
-		m_PlayableContainer.GetOnUnregister().Insert(RemoveSelf);
-		//m_PlayableContainer.GetOnPlayerDisconnected().Insert(OnDisconnected);
-		m_PlayableContainer.GetOnPlayerConnected().Insert(OnConnected);
-		m_PlayableContainer.GetOnPlayerStateChange().Insert(OnStateChange);
-		m_PlayableContainer.GetOnPlayerPinChange().Insert(UpdatePined);
-		m_PlayableContainer.GetOnPlayerRoleChange().Insert(OnRoleChange);
+		// Events (container-level — only work if m_PlayableContainer is valid)
+		if (m_PlayableContainer)
+		{
+			m_PlayableContainer.GetOnPlayerChange().Insert(UpdatePlayer);
+			m_PlayableContainer.GetOnDamageStateChanged().Insert(UpdateDammage);
+			m_PlayableContainer.GetOnUnregister().Insert(RemoveSelf);
+			m_PlayableContainer.GetOnPlayerRoleChange().Insert(OnRoleChange);
+		}
 	}
 	
 	PS_PlayableContainer GetPlayable()
@@ -185,8 +215,9 @@ class PS_CharacterSelector : SCR_ButtonComponent
 		UpdateState();
 	}
 	
-	void UpdatePined(bool pined)
+	void UpdatePined(int playerId, bool pined)
 	{
+		if (playerId != m_iPlayerId) return;
 		m_bPined = pined;
 		UpdateState();
 	}
@@ -220,16 +251,24 @@ class PS_CharacterSelector : SCR_ButtonComponent
 		
 		m_bPined = m_PlayableManager.GetPlayerPin(m_iPlayerId);
 		if (m_iPlayerId > 0)
-			m_bDisconnected = !m_PlayerManager.IsPlayerConnected(m_iPlayerId);
+		{
+			PlayerManager pm = GetGame().GetPlayerManager();
+			if (pm)
+				m_bDisconnected = !pm.IsPlayerConnected(m_iPlayerId);
+			else
+				m_bDisconnected = false;
+		}
 		else
+		{
 			m_bDisconnected = false;
+		}
 		
 		string playerName = m_PlayableManager.GetPlayerName(playerId);
 		m_wCharacterStatus.SetText(playerName);
 		
 		m_bAdmin = SCR_Global.IsAdmin(playerId);
 		
-		if (oldPlayerId == m_iCurrentPlayerId || playerId == m_iCurrentPlayerId)
+		if (oldPlayerId == GetCurrentPlayerId() || playerId == GetCurrentPlayerId())
 			m_CoopLobby.SetPreviewPlayable(m_iPlayableId, false);
 
 		OnPlayerPlayableChange(playerId, m_iPlayableId);
@@ -240,15 +279,50 @@ class PS_CharacterSelector : SCR_ButtonComponent
 	{
 		m_wRoot.RemoveFromHierarchy();
 		m_RolesGroup.OnPlayableRemoved(m_PlayableContainer);
-		m_CoopLobby.OnPlayableRemoved(m_PlayableContainer);
+		m_CoopLobby.OnPlayableRemoved(m_PlayableContainer.GetRplId(), m_sFactionKey, m_iPlayerId);
 		if (m_iPlayerId == -2)
 			m_RolesGroup.UpdateLockedState(false);
 	}
 	
 	void OnPlayerPlayableChange(int playerId, RplId playbleId)
 	{
+		// Clear occupant if this slot no longer has a player assigned to it
+		if (playbleId != m_iPlayableId && m_iPlayerId > 0 && m_iPlayerId == playerId)
+		{
+			m_CoopLobby.AddFactionCount(m_Faction, -1, 0);
+			m_iPlayerId = -1;
+			if (m_wCharacterStatus)
+				m_wCharacterStatus.SetText("");
+			UpdateStateIcon();
+			UpdateColor();
+		}
+		
+		// Visual update for this slot when assigned
+		PS_SlotCharacterData slotData;
+		if (playbleId == m_iPlayableId && m_PlayableManager && m_PlayableManager.FindSlotData(m_iPlayableId, slotData))
+		{
+			int newOccupant = slotData.m_PlayerId;
+			if (newOccupant != m_iPlayerId)
+			{
+				if (m_iPlayerId <= 0 && newOccupant > 0)
+					m_CoopLobby.AddFactionCount(m_Faction, 1, 0);
+				if (m_iPlayerId > 0 && newOccupant <= 0)
+					m_CoopLobby.AddFactionCount(m_Faction, -1, 0);
+				
+				m_iPlayerId = newOccupant;
+				if (m_wCharacterStatus)
+				{
+					string playerName = m_PlayableManager.GetPlayerName(newOccupant);
+					if (playerName != "")
+						m_wCharacterStatus.SetText(playerName);
+				}
+				UpdateStateIcon();
+				UpdateColor();
+			}
+		}
+		
 		// Self kick
-		if (m_iPlayerId == m_iCurrentPlayerId)
+		if (m_iPlayerId == GetCurrentPlayerId())
 		{
 			m_bCanKick = false;
 			UpdateState();
@@ -264,7 +338,7 @@ class PS_CharacterSelector : SCR_ButtonComponent
 		}
 		
 		// get CURRENT PLAYER playable
-		RplId currentPlayableId = m_PlayableManager.GetPlayableByPlayer(m_iCurrentPlayerId);
+		RplId currentPlayableId = m_PlayableManager.GetPlayableByPlayer(GetCurrentPlayerId());
 		if (currentPlayableId == RplId.Invalid())
 		{
 			m_bCanKick = false;
@@ -273,11 +347,11 @@ class PS_CharacterSelector : SCR_ButtonComponent
 		}
 		
 		// Only group leader can kick (Longest event?)
-		FactionKey factionKeyCurrent = m_PlayableManager.GetPlayerFactionKey(m_iCurrentPlayerId);
+		FactionKey factionKeyCurrent = m_PlayableManager.GetPlayerFactionKey(GetCurrentPlayerId());
 		SCR_AIGroup groupCurrent = m_PlayableManager.GetPlayerGroupByPlayable(currentPlayableId);
 		FactionKey factionKey = m_PlayableManager.GetPlayerFactionKey(m_iPlayerId);
 		SCR_AIGroup group = m_PlayableManager.GetPlayerGroupByPlayable(m_iPlayableId);
-		m_bCanKick = m_PlayableManager.IsPlayerGroupLeader(m_iCurrentPlayerId)
+		m_bCanKick = m_PlayableManager.IsPlayerGroupLeader(GetCurrentPlayerId())
 			&& factionKeyCurrent == factionKey
 			&& groupCurrent == group;
 		
@@ -311,10 +385,11 @@ class PS_CharacterSelector : SCR_ButtonComponent
 		UpdateState();
 	}
 	
-	void OnStateChange(PS_EPlayableControllerState state)
+	void OnStateChange(int playerId, PS_EPlayableControllerState state)
 	{
+		if (playerId != m_iPlayerId) return;
 		m_bReady = state == PS_EPlayableControllerState.Ready;
-		m_bDisconnected = state == PS_EPlayableControllerState.Disconected;
+		m_bDisconnected = state == PS_EPlayableControllerState.Disconnected;
 		
 		UpdateColor();
 	}
@@ -363,7 +438,7 @@ class PS_CharacterSelector : SCR_ButtonComponent
 			state = PS_ECharacterState.Pin;
 		else if (m_iPlayerId == -2)
 			state = PS_ECharacterState.Lock;
-		//else if (m_bCanKick && m_iPlayerId >= 0 && m_iPlayerId != m_iCurrentPlayerId)
+		//else if (m_bCanKick && m_iPlayerId >= 0 && m_iPlayerId != GetCurrentPlayerId())
 		//	state = PS_ECharacterState.Kick;
 		else if (m_iPlayerId >= 0)
 			state = PS_ECharacterState.Player;
@@ -431,78 +506,85 @@ class PS_CharacterSelector : SCR_ButtonComponent
 			return;
 		}
 		
-		int playerId = m_CoopLobby.GetSelectedPlayer();
-		if (m_iPlayerId == -2)
+		PS_SlotCharacterData slotData;
+		if (!m_PlayableManager || !m_PlayableManager.FindSlotData(m_iPlayableId, slotData))
+			return;
+		
+		int slotOccupant = slotData.m_PlayerId;
+		int selectedPlayerId = -1;
+		if (m_CoopLobby)
+			selectedPlayerId = m_CoopLobby.GetSelectedPlayer();
+		int currentPlayerId = GetCurrentPlayerId();
+		
+		PS_PlayableControllerComponent pcc = GetControllerComp();
+		SCR_EGameModeState gameState = SCR_EGameModeState.PREGAME;
+		if (m_GameModeCoop)
+			gameState = m_GameModeCoop.GetState();
+		
+		// Locked slot
+		if (slotOccupant == -2)
 		{
-			m_CoopLobby.SetPreviewPlayable(m_iPlayableId, true);
+			if (m_CoopLobby) m_CoopLobby.SetPreviewPlayable(m_iPlayableId, true);
 			SCR_UISoundEntity.SoundEvent("SOUND_FE_BUTTON_FAIL");
 			return;
 		}
-		if (m_iPlayerId > 0 && playerId != m_iPlayerId)
+		
+		// Can't take someone else's slot
+		if (slotOccupant > 0 && selectedPlayerId != slotOccupant && !PS_PlayersHelper.IsAdminOrServer())
 		{
-			m_CoopLobby.SetPreviewPlayable(m_iPlayableId, true);
-			SCR_UISoundEntity.SoundEvent("SOUND_FE_BUTTON_FAIL");
+			if (m_CoopLobby) m_CoopLobby.SetPreviewPlayable(m_iPlayableId, true);
 			return;
 		}
-		PS_PlayableContainer playableContainer = m_PlayableManager.GetPlayableById(m_iPlayableId);
-		if (playableContainer.GetDamageState() == EDamageState.DESTROYED)
-		{
-			m_CoopLobby.SetPreviewPlayable(m_iPlayableId, true);
-			SCR_UISoundEntity.SoundEvent("SOUND_FE_BUTTON_FAIL");
-			return;
-		}
-	
-		SCR_EGameModeState gameState = m_GameModeCoop.GetState();
+		
+		// Briefing guard
 		if (!PS_PlayersHelper.IsAdminOrServer())
 		{
-			RplId playableId = m_PlayableManager.GetPlayableByPlayer(m_iCurrentPlayerId);
-			if (gameState == SCR_EGameModeState.BRIEFING && playableId != RplId.Invalid())
+			RplId currentPlayableId = m_PlayableManager.GetPlayableByPlayer(currentPlayerId);
+			if (gameState == SCR_EGameModeState.BRIEFING && currentPlayableId != RplId.Invalid())
 			{
-				m_CoopLobby.SetPreviewPlayable(m_iPlayableId, true);
+				if (m_CoopLobby) m_CoopLobby.SetPreviewPlayable(m_iPlayableId, true);
 				return;
 			}
 		}
 		
-		if (playerId != m_iPlayerId)
+		if (!pcc)
+			return;
+		
+		if (slotOccupant > 0 && selectedPlayerId == slotOccupant)
 		{
-			if (!CanJoinFaction())
-			{
-				SCR_ChatPanelManager chatPanelManager = SCR_ChatPanelManager.GetInstance();
-				ChatCommandInvoker invoker = chatPanelManager.GetCommandInvoker("lmsg");
-				invoker.Invoke(null, "Где баланс?");
-				m_CoopLobby.SetPreviewPlayable(m_iPlayableId, true);
-				return;
-			}
-			
+			// Vacate own slot
 			SCR_UISoundEntity.SoundEvent("SOUND_HUD_GADGET_SELECT");
-			m_PlayableControllerComponent.MoveToVoNRoom(playerId, m_sFactionKey, m_sPlayableCallsign);
-			m_PlayableControllerComponent.ChangeFactionKey(playerId, m_sFactionKey);
-			m_PlayableControllerComponent.SetPlayerState(playerId, PS_EPlayableControllerState.NotReady);	
-			m_PlayableControllerComponent.SetPlayerPlayable(playerId, m_iPlayableId);
-		} else {
-			SCR_UISoundEntity.SoundEvent("SOUND_HUD_GADGET_SELECT");
-			m_PlayableControllerComponent.MoveToVoNRoom(playerId, m_sFactionKey, "#PS-VoNRoom_Faction");
-			m_PlayableControllerComponent.ChangeFactionKey(playerId, "");
-			m_PlayableControllerComponent.SetPlayerState(playerId, PS_EPlayableControllerState.NotReady);
-			m_PlayableControllerComponent.SetPlayerPlayable(playerId, RplId.Invalid());
+			GetGame().GetCallqueue().Call(pcc.SetPlayerState, selectedPlayerId, PS_EPlayableControllerState.NotReady);
+			GetGame().GetCallqueue().Call(pcc.SetPlayerToSlot, RplId.Invalid(), selectedPlayerId);
 			if (PS_PlayersHelper.IsAdminOrServer())
-				m_PlayableControllerComponent.UnpinPlayer(playerId);
+				GetGame().GetCallqueue().Call(pcc.UnpinPlayer, selectedPlayerId);
+		}
+		else
+		{
+			// Assign to slot + open inventory preview (matches vanilla behavior)
+			SCR_UISoundEntity.SoundEvent("SOUND_HUD_GADGET_SELECT");
+			GetGame().GetCallqueue().Call(pcc.SetPlayerState, selectedPlayerId, PS_EPlayableControllerState.NotReady);
+			GetGame().GetCallqueue().Call(pcc.SetPlayerToSlot, m_iPlayableId, selectedPlayerId);
+			if (m_CoopLobby)
+				GetGame().GetCallqueue().Call(m_CoopLobby.SetPreviewPlayable, m_iPlayableId, false);
 		}
 		
-		if (PS_PlayersHelper.IsAdminOrServer() && playerId != m_iCurrentPlayerId && gameState == SCR_EGameModeState.GAME)
-			m_PlayableControllerComponent.ForceSwitch(playerId);
-		if (!PS_PlayersHelper.IsAdminOrServer() && playerId == m_iCurrentPlayerId && gameState == SCR_EGameModeState.BRIEFING)
-			m_PlayableControllerComponent.SwitchToMenuServer(SCR_EGameModeState.BRIEFING);
+		if (PS_PlayersHelper.IsAdminOrServer() && selectedPlayerId != currentPlayerId && gameState == SCR_EGameModeState.GAME)
+			GetGame().GetCallqueue().Call(pcc.ForceSwitch, selectedPlayerId);
+		if (!PS_PlayersHelper.IsAdminOrServer() && selectedPlayerId == currentPlayerId && gameState == SCR_EGameModeState.BRIEFING)
+			GetGame().GetCallqueue().Call(pcc.SwitchToMenuServer, SCR_EGameModeState.BRIEFING);
 	}
 	
 	void OnHover()
 	{
-		m_CoopLobby.SetPreviewPlayable(m_PlayableContainer.GetRplId(), false);
+		if (m_PlayableContainer)
+			m_CoopLobby.SetPreviewPlayable(m_PlayableContainer.GetRplId(), false);
 	}
 	
 	void OnHoverLeave()
 	{
-		m_CoopLobby.SetPreviewPlayable(RplId.Invalid(), false);
+		if (m_PlayableContainer)
+			m_CoopLobby.SetPreviewPlayable(RplId.Invalid(), false);
 	}
 	
 	// --------------------------------------------------------------------------------------------------------------------------------
@@ -519,7 +601,7 @@ class PS_CharacterSelector : SCR_ButtonComponent
 			{
 				contextMenu.ActionGetArmaId(m_iPlayerId);
 			}
-			if (m_iPlayerId != m_iCurrentPlayerId)
+			if (m_iPlayerId != GetCurrentPlayerId())
 			{
 				PermissionState mute = PermissionState.DISALLOWED;
 				SocialComponent socialComp = SocialComponent.Cast(GetGame().GetPlayerController().FindComponent(SocialComponent));
@@ -528,7 +610,7 @@ class PS_CharacterSelector : SCR_ButtonComponent
 				else
 					contextMenu.ActionMute(m_iPlayerId);
 				
-				if (m_bCanKick && m_iPlayerId >= 0 && m_iPlayerId != m_iCurrentPlayerId)
+				if (m_bCanKick && m_iPlayerId >= 0 && m_iPlayerId != GetCurrentPlayerId())
 					contextMenu.ActionFreeSlot(m_iPlayableId).Insert(OnActionFreeSlot);
 				
 				if (PS_PlayersHelper.IsAdminOrServer())
@@ -563,12 +645,16 @@ class PS_CharacterSelector : SCR_ButtonComponent
 		SCR_UISoundEntity.SoundEvent("SOUND_FE_BUTTON_FILTER_ON");
 		if (m_iPlayerId > 0)
 			OnActionFreeSlot(contextAction, contextActionDataPlayable);
-		m_PlayableControllerComponent.SetPlayablePlayer(contextActionDataPlayable.GetPlayableId(), -2);
+		PS_PlayableControllerComponent pcc = GetControllerComp();
+		if (pcc)
+			pcc.SetSlotLockState(contextActionDataPlayable.GetPlayableId(), true);
 	}
 	void OnActionUnlock(PS_ContextAction contextAction, PS_ContextActionDataPlayable contextActionDataPlayable)
 	{
 		SCR_UISoundEntity.SoundEvent("SOUND_FE_BUTTON_FILTER_OFF");
-		m_PlayableControllerComponent.SetPlayablePlayer(contextActionDataPlayable.GetPlayableId(), -1);
+		PS_PlayableControllerComponent pcc = GetControllerComp();
+		if (pcc)
+			pcc.SetSlotLockState(contextActionDataPlayable.GetPlayableId(), false);
 	}
 	void OnActionFreeSlot(PS_ContextAction contextAction, PS_ContextActionDataPlayable contextActionDataPlayable)
 	{
@@ -576,67 +662,55 @@ class PS_CharacterSelector : SCR_ButtonComponent
 			return;
 		
 		SCR_UISoundEntity.SoundEvent("SOUND_LOBBY_KICK");
-		m_PlayableControllerComponent.MoveToVoNRoom(m_iPlayerId, m_sFactionKey, "#PS-VoNRoom_Faction");
-		m_PlayableControllerComponent.ChangeFactionKey(m_iPlayerId, "");
-		m_PlayableControllerComponent.SetPlayerState(m_iPlayerId, PS_EPlayableControllerState.NotReady);
-		m_PlayableControllerComponent.SetPlayerPlayable(m_iPlayerId, -1);
-		if (PS_PlayersHelper.IsAdminOrServer())
-			m_PlayableControllerComponent.UnpinPlayer(m_iPlayerId);
+		PS_PlayableControllerComponent pcc = GetControllerComp();
+		if (pcc)
+		{
+			pcc.SetPlayerState(m_iPlayerId, PS_EPlayableControllerState.NotReady);
+			pcc.KickPlayerFromSlot(m_iPlayableId);
+			if (PS_PlayersHelper.IsAdminOrServer())
+				pcc.UnpinPlayer(m_iPlayerId);
+		}
 	}
 	
 	// --------------------------------------------------------------------------------------------------------------------------------
 	void OnStateClicked(SCR_ButtonBaseComponent button)
 	{
 		m_bStateClickSkip = true;
+		PS_PlayableControllerComponent pcc = GetControllerComp();
+		if (!pcc)
+			return;
 		switch (m_state)
 		{
 			case PS_ECharacterState.Pin:
 				SCR_UISoundEntity.SoundEvent("SOUND_E_LAYER_BACK");
-				m_PlayableControllerComponent.UnpinPlayer(m_iPlayerId);
+				pcc.UnpinPlayer(m_iPlayerId);
 				break;
 			case PS_ECharacterState.Dead:
 				break;
 			case PS_ECharacterState.Lock:
 				SCR_UISoundEntity.SoundEvent("SOUND_FE_BUTTON_FILTER_OFF");
-				m_PlayableControllerComponent.SetPlayablePlayer(m_iPlayableId, -1);
+				pcc.SetSlotLockState(m_iPlayableId, false);
 				break;
 			case PS_ECharacterState.Kick:
 				SCR_UISoundEntity.SoundEvent("SOUND_LOBBY_KICK");
-				m_PlayableControllerComponent.MoveToVoNRoom(m_iPlayerId, m_sFactionKey, "#PS-VoNRoom_Faction");
-				m_PlayableControllerComponent.ChangeFactionKey(m_iPlayerId, "");
-				m_PlayableControllerComponent.SetPlayerState(m_iPlayerId, PS_EPlayableControllerState.NotReady);
-				m_PlayableControllerComponent.SetPlayerPlayable(m_iPlayerId, -1);
+				pcc.SetPlayerState(m_iPlayerId, PS_EPlayableControllerState.NotReady);
+				pcc.KickPlayerFromSlot(m_iPlayableId);
 				if (PS_PlayersHelper.IsAdminOrServer())
-					m_PlayableControllerComponent.UnpinPlayer(m_iPlayerId);
+					pcc.UnpinPlayer(m_iPlayerId);
 				break;
 			case PS_ECharacterState.Empty:
 				SCR_UISoundEntity.SoundEvent("SOUND_FE_BUTTON_FILTER_ON");
 				if (m_iPlayerId > 0)
-					m_PlayableControllerComponent.SetPlayerState(m_iPlayerId, PS_EPlayableControllerState.NotReady);
-				m_PlayableControllerComponent.SetPlayablePlayer(m_iPlayableId, -2);
+					pcc.SetPlayerState(m_iPlayerId, PS_EPlayableControllerState.NotReady);
+				pcc.SetSlotLockState(m_iPlayableId, true);
 			   break;
 			case PS_ECharacterState.Player:
 				break;
 			case PS_ECharacterState.Disconnected:
 				SCR_UISoundEntity.SoundEvent("SOUND_LOBBY_KICK");
-				m_PlayableControllerComponent.MoveToVoNRoom(m_iPlayerId, m_PlayableManager.GetPlayerFactionKey(m_iPlayerId), "#PS-VoNRoom_Faction");
-				m_PlayableControllerComponent.ChangeFactionKey(m_iPlayerId, "");
-				m_PlayableControllerComponent.SetPlayerPlayable(m_iPlayerId, RplId.Invalid());
+				pcc.SetPlayerToSlot(RplId.Invalid(), m_iPlayerId);
 				break;
 		}
-	}
-	
-	// --------------------------------------------------------------------------------------------------------------------------------
-	bool CanJoinFaction()
-	{
-		// Check faction balance
-		PS_GameModeCoop gameModeCoop = PS_GameModeCoop.Cast(GetGame().GetGameMode());
-		if (m_PlayableContainer)
-		{
-			if (!PS_PlayersHelper.IsAdminOrServer() && !gameModeCoop.CanJoinFaction(m_sFactionKey, m_PlayableManager.GetPlayerFactionKey(m_iCurrentPlayerId)))
-				return false;
-		}
-		return true;
 	}
 }
 

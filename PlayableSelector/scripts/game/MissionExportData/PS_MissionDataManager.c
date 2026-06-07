@@ -164,7 +164,7 @@ class PS_MissionDataManager : ScriptComponent
 		if (m_playerSaved.Contains(playerId))
 			return;
 		
-		string GUID = GetGame().GetBackendApi().GetPlayerIdentityId(playerId);
+		string GUID = SCR_PlayerIdentityUtils.GetPlayerIdentityId(playerId);
 		string name = m_PlayerManager.GetPlayerName(playerId);
 		
 		PS_MissionDataPlayer player = new PS_MissionDataPlayer();
@@ -220,7 +220,8 @@ class PS_MissionDataManager : ScriptComponent
 			descriptionData.Title = description.m_sTitle;
 			descriptionData.DescriptionLayout = description.m_sDescriptionLayout;
 			descriptionData.TextData = description.m_sTextData;
-			descriptionData.VisibleForFactions = description.m_aVisibleForFactions;
+			foreach (FactionKey factionKey, bool visible : description.GetVisibleForFactionsRaw())
+				descriptionData.VisibleForFactions.Insert(factionKey);
 			descriptionData.EmptyFactionVisibility = description.m_bEmptyFactionVisibility;
 		}
 		
@@ -353,7 +354,7 @@ class PS_MissionDataManager : ScriptComponent
 	
 	void WriteToFile()
 	{
-		SCR_JsonSaveContext missionSaveContext = new SCR_JsonSaveContext();
+		JsonSaveContext missionSaveContext = new JsonSaveContext();
 		missionSaveContext.WriteValue("", m_Data);
 		string fileName = string.Format("$profile:Sessions\\PS_MissionData_%1.json", System.GetUnixTime().ToString());
 		missionSaveContext.SaveToFile(fileName);

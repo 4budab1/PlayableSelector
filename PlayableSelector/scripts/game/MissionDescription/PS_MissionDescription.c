@@ -4,23 +4,28 @@ class PS_MissionDescriptionClass : GenericEntityClass
 
 class PS_MissionDescription : GenericEntity
 {
-	[Attribute("")]
+	[RplProp(), Attribute("")]
 	string m_sTitle;
-	[Attribute("")]
+	[RplProp(), Attribute("")]
 	ResourceName m_sDescriptionLayout;
-	[Attribute(defvalue: "", uiwidget: UIWidgets.EditBoxMultiline)]
+	[RplProp(), Attribute(defvalue: "", uiwidget: UIWidgets.EditBoxMultiline)]
 	string m_sTextData;
 	
-	[Attribute("")]
-	ref array<FactionKey> m_aVisibleForFactions;
-	
-	[Attribute("")]
+	[RplProp()]
+	protected ref ReplicatedBasicMap<FactionKey, bool> m_aVisibleForFactions = new ReplicatedBasicMap<FactionKey, bool>();
+
+	ref map<FactionKey, bool> GetVisibleForFactionsRaw()
+	{
+		return m_aVisibleForFactions.GetRawMap();
+	}
+
+	[RplProp(), Attribute("")]
 	bool m_bEmptyFactionVisibility;
 	
-	[Attribute("")]
+	[RplProp(), Attribute("")]
 	bool m_bShowForAnyFaction;
 	
-	[Attribute("")]
+	[RplProp(), Attribute("")]
 	int m_iOrder;
 	
 	int GetOrder()
@@ -29,7 +34,8 @@ class PS_MissionDescription : GenericEntity
 	}
 	void SetOrder(int order)
 	{
-		RPC_SetOrder(order);
+		m_iOrder = order;
+		Replication.BumpMe();
 		Rpc(RPC_SetOrder, order);
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]
@@ -46,21 +52,30 @@ class PS_MissionDescription : GenericEntity
 	bool GetVisibleForFaction(FactionKey factionKey)
 	{
 		if (m_bShowForAnyFaction) return true;
-		return m_aVisibleForFactions.Contains(factionKey);
+		bool visible;
+		m_aVisibleForFactions.Find(factionKey, visible);
+		return visible;
 	}
 	void SetVisibleForFaction(Faction faction, bool visible)
 	{
-		RPC_SetVisibleForFaction_ByKey(faction.GetFactionKey(), visible);
 		Rpc(RPC_SetVisibleForFaction_ByKey, faction.GetFactionKey(), visible);
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]
 	protected void RPC_SetVisibleForFaction_ByKey(FactionKey factionKey, bool visible)
 	{
-		Faction faction = GetGame().GetFactionManager().GetFactionByKey(factionKey);
 		if (visible)
-			{if (!GetVisibleForFaction(faction.GetFactionKey())) m_aVisibleForFactions.Insert(faction.GetFactionKey());}
+		{
+			if (!GetVisibleForFaction(factionKey))
+				m_aVisibleForFactions.Insert(factionKey, true);
+		}
 		else
-			{if (GetVisibleForFaction(faction.GetFactionKey())) m_aVisibleForFactions.RemoveItem(faction.GetFactionKey());}
+		{
+			if (GetVisibleForFaction(factionKey))
+				m_aVisibleForFactions.Remove(factionKey);
+		}
+		
+		if (Replication.IsServer())
+			Replication.BumpMe();
 	}
 	
 	bool GetVisibleForEmptyFaction()
@@ -69,7 +84,8 @@ class PS_MissionDescription : GenericEntity
 	}
 	void SetVisibleForEmptyFaction(bool visible)
 	{
-		RPC_SetVisibleForEmptyFaction(visible);
+		m_bEmptyFactionVisibility = visible;
+		Replication.BumpMe();
 		Rpc(RPC_SetVisibleForEmptyFaction, visible);
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]
@@ -81,6 +97,7 @@ class PS_MissionDescription : GenericEntity
 	void SetLayout(ResourceName layout)
 	{
 		m_sDescriptionLayout = layout;
+		Replication.BumpMe();
 	}
 	
 	string GetTitle()
@@ -89,7 +106,8 @@ class PS_MissionDescription : GenericEntity
 	}
 	void SetTitle(string title)
 	{
-		RPC_SetTitle(title);
+		m_sTitle = title;
+		Replication.BumpMe();
 		Rpc(RPC_SetTitle, title);
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]
@@ -105,7 +123,8 @@ class PS_MissionDescription : GenericEntity
 	}
 	void SetShowForAnyFaction(bool enable)
 	{
-		RPC_SetShowForAnyFaction(enable);
+		m_bShowForAnyFaction = enable;
+		Replication.BumpMe();
 		Rpc(RPC_SetShowForAnyFaction, enable);
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]
@@ -121,7 +140,8 @@ class PS_MissionDescription : GenericEntity
 	}
 	void SetTextData(string textData)
 	{
-		RPC_SetTextData(textData);
+		m_sTextData = textData;
+		Replication.BumpMe();
 		Rpc(RPC_SetTextData, textData);
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]
@@ -133,9 +153,6 @@ class PS_MissionDescription : GenericEntity
 	// Main functions
 	override protected void EOnInit(IEntity owner)
 	{
-		if (m_aVisibleForFactions == null)
-			m_aVisibleForFactions = new array<FactionKey>();
-		// Frame delay for manager init
 		GetGame().GetCallqueue().CallLater(RegisterToDescriptionManager);
 	}
 	void RegisterToDescriptionManager()
@@ -148,7 +165,6 @@ class PS_MissionDescription : GenericEntity
 	
 	void PS_MissionDescription(IEntitySource src, IEntity parent)
 	{
-		// Enable init event
 		SetEventMask(EntityEvent.INIT);
 	}
 	
@@ -158,54 +174,5 @@ class PS_MissionDescription : GenericEntity
 		if (!missionDescriptionManager)
 			return;
 		missionDescriptionManager.UnregisterDescription(this);
-	}
-	
-	// JIP Replication
-	override bool RplSave(ScriptBitWriter writer)
-	{
-		// Pack every changeable variable
-		writer.WriteString(m_sTitle);
-		writer.WriteString(m_sDescriptionLayout);
-		writer.WriteString(m_sTextData);
-		writer.WriteBool(m_bEmptyFactionVisibility);
-		writer.WriteBool(m_bShowForAnyFaction);
-		writer.WriteInt(m_iOrder);
-		
-		
-		string factions = "";
-		foreach (FactionKey factionKey: m_aVisibleForFactions)
-		{
-			if (factions != "") factions += ",";
-			factions += factionKey;
-		}
-		writer.WriteString(factions);
-		
-		return true;
-	}
-	override bool RplLoad(ScriptBitReader reader)
-	{
-		// Unpack every changeable variable
-		reader.ReadString(m_sTitle);
-		reader.ReadString(m_sDescriptionLayout);
-		reader.ReadString(m_sTextData);
-		reader.ReadBool(m_bEmptyFactionVisibility);
-		reader.ReadBool(m_bShowForAnyFaction);		
-		reader.ReadInt(m_iOrder);
-		
-		string factions;
-		reader.ReadString(factions);
-		GetGame().GetCallqueue().CallLater(FactionsInit, 0, false, factions);
-		
-		return true;
-	}
-	
-	void FactionsInit(string factions)
-	{
-		array<string> outTokens = new array<string>();
-		factions.Split(",", outTokens, false);
-		foreach (FactionKey factionKey: outTokens)
-		{
-			m_aVisibleForFactions.Insert(factionKey);
-		}
 	}
 }

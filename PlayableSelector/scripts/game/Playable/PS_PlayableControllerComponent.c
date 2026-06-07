@@ -9,7 +9,7 @@ class PS_PlayableControllerComponent : ScriptComponent
 {
 	protected IEntity m_Camera;
 	protected IEntity m_InitialEntity;
-	protected vector m_vVoNPosition = PS_VoNRoomsManager.roomInitialPosition;
+	protected vector m_vVoNPosition = PS_VoNChannelsManager.roomInitialPosition;
 	protected SCR_EGameModeState m_eMenuState = SCR_EGameModeState.PREGAME;
 	protected bool m_bAfterInitialSwitch = false;
 	protected vector m_vObserverPosition = "0 0 0";
@@ -18,6 +18,11 @@ class PS_PlayableControllerComponent : ScriptComponent
 	void SetVoNPosition(vector VoNPosition)
 	{
 		m_vVoNPosition = VoNPosition;
+	}
+	
+	vector GetObserverPosition()
+	{
+		return m_vObserverPosition;
 	}
 	
 	[RplProp()]
@@ -48,7 +53,15 @@ class PS_PlayableControllerComponent : ScriptComponent
 	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
 	void RPC_SetFactionReady(FactionKey factionKey, int readyValue)
 	{
+		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
+		int playerId = thisPlayerController.GetPlayerId();
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
+
+		FactionKey commanderFactionKey;
+		bool isCommander = playableManager.IsPlayerFactionCommander(playerId, commanderFactionKey);
+		if (!SCR_Global.IsAdmin(playerId) && (!isCommander || commanderFactionKey != factionKey))
+			return;
+
 		playableManager.SetFactionReady(factionKey, readyValue);
 	}
 
@@ -101,7 +114,6 @@ class PS_PlayableControllerComponent : ScriptComponent
 				GetGame().GetMenuManager().OpenMenu(ChimeraMenuPreset.BriefingMapMenu);
 				break;
 			case SCR_EGameModeState.GAME:
-				GetGame().GetCallqueue().Call(ApplyPlayable);
 				GetGame().GetMenuManager().OpenMenu(ChimeraMenuPreset.FadeToGame);
 				break;
 			case SCR_EGameModeState.DEBRIEFING:
@@ -131,9 +143,7 @@ class PS_PlayableControllerComponent : ScriptComponent
 	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
 	void RPC_LoadMission(string missionName)
 	{
-		// SCR_SaveManagerCore saveManager = GetGame().GetSaveManager();
-		// It's litteraly broken on dedicated.
-		// saveManager.RestartAndLoad(missionName);
+		// Intentionally disabled — SCR_SaveManagerCore.RestartAndLoad is broken on dedicated server
 	}
 
 	// ------ FactionLock ------
@@ -144,11 +154,8 @@ class PS_PlayableControllerComponent : ScriptComponent
 	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
 	void RPC_FactionLockSwitch()
 	{
-		// only admins can change faction lock
-		PlayerManager playerManager = GetGame().GetPlayerManager();
 		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
-		EPlayerRole playerRole = playerManager.GetPlayerRoles(thisPlayerController.GetPlayerId());
-		if (playerRole == EPlayerRole.NONE)
+		if (!SCR_Global.IsAdmin(thisPlayerController.GetPlayerId()))
 			return;
 
 		PS_GameModeCoop gameMode = PS_GameModeCoop.Cast(GetGame().GetGameMode());
@@ -273,8 +280,12 @@ class PS_PlayableControllerComponent : ScriptComponent
 
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 		SCR_AIGroup aiGroup = playableManager.GetPlayerGroupByPlayable(oldPlayableComponent.GetRplId());
-		SCR_AIGroup playabelGroup = aiGroup.m_BotsGroup;
-		playabelGroup.AddAIEntityToGroup(newCharacter);
+		if (!aiGroup)
+			return;
+		SCR_AIGroup playableGroup = aiGroup.GetSlave();
+		if (!playableGroup)
+			return;
+		playableGroup.AddAIEntityToGroup(newCharacter);
 		playableManager.SetPlayablePlayerGroupId(playableContainer.GetRplId(), aiGroup.GetGroupID());
 
 		playableContainer.SetPlayable(true);
@@ -282,7 +293,7 @@ class PS_PlayableControllerComponent : ScriptComponent
 
 		character.GetDamageManager().Kill(Instigator.CreateInstigator(newCharacter));
 		character.GetDamageManager().SetHealthScaled(0);
-		GetGame().GetCallqueue().CallLater(RPC_ForceRespawnPlayerLate, 300, false, character, oldPlayableComponent, newCharacter, playableContainer);
+		GetGame().GetCallqueue().CallLater(ForceRespawnPlayerLate, 300, false, character, oldPlayableComponent, newCharacter, playableContainer);
 	}
 
 	// ------ ForceRespawnPlayer ------
@@ -307,7 +318,7 @@ class PS_PlayableControllerComponent : ScriptComponent
 		if (!character)
 			return;
 
-		Rpc(RPC_ForceRespawnPlayer, Replication.FindId(character), initPosition);
+		Rpc(RPC_ForceRespawnPlayer, Replication.FindItemId(character), initPosition);
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
 	void RPC_ForceRespawnPlayer(RplId respawnEntityRplId, bool initPosition)
@@ -336,8 +347,12 @@ class PS_PlayableControllerComponent : ScriptComponent
 
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 		SCR_AIGroup aiGroup = playableManager.GetPlayerGroupByPlayable(oldPlayableComponent.GetRplId());
-		SCR_AIGroup playabelGroup = aiGroup.m_BotsGroup;
-		playabelGroup.AddAIEntityToGroup(newCharacter);
+		if (!aiGroup)
+			return;
+		SCR_AIGroup playableGroup = aiGroup.GetSlave();
+		if (!playableGroup)
+			return;
+		playableGroup.AddAIEntityToGroup(newCharacter);
 		playableManager.SetPlayablePlayerGroupId(playableContainer.GetRplId(), aiGroup.GetGroupID());
 
 		playableContainer.SetPlayable(true);
@@ -345,36 +360,36 @@ class PS_PlayableControllerComponent : ScriptComponent
 
 		character.GetDamageManager().Kill(Instigator.CreateInstigator(newCharacter));
 		character.GetDamageManager().SetHealthScaled(0);
-		GetGame().GetCallqueue().CallLater(RPC_ForceRespawnPlayerLate, 300, false, character, oldPlayableComponent, newCharacter, playableContainer);
+		GetGame().GetCallqueue().CallLater(ForceRespawnPlayerLate, 300, false, character, oldPlayableComponent, newCharacter, playableContainer);
 	}
 
-	void RPC_ForceRespawnPlayerLate(SCR_ChimeraCharacter character, PS_PlayableComponent oldPlayableComponent, SCR_ChimeraCharacter newCharacter, PS_PlayableComponent playableContainer)
+	void ForceRespawnPlayerLate(SCR_ChimeraCharacter character, PS_PlayableComponent oldPlayableComponent, SCR_ChimeraCharacter newCharacter, PS_PlayableComponent playableContainer)
 	{
 		character.GetDamageManager().Kill(Instigator.CreateInstigator(newCharacter));
 		character.GetDamageManager().SetHealthScaled(0);
 		if (!character.GetDamageManager().IsDestroyed())
 		{
-			GetGame().GetCallqueue().CallLater(RPC_ForceRespawnPlayerLate, 300, false, character, oldPlayableComponent, newCharacter, playableContainer);
+			GetGame().GetCallqueue().CallLater(ForceRespawnPlayerLate, 300, false, character, oldPlayableComponent, newCharacter, playableContainer);
 			return;
 		}
 
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
-		PS_VoNRoomsManager VoNRoomsManager = PS_VoNRoomsManager.GetInstance();
+		PS_VoNChannelsManager VoNChannelsManager = PS_VoNChannelsManager.GetInstance();
 		SCR_AIGroup aiGroup = playableManager.GetPlayerGroupByPlayable(oldPlayableComponent.GetRplId());
-		SCR_AIGroup playabelGroup = aiGroup.GetSlave();
-		playabelGroup.AddAIEntityToGroup(character);
+		if (!aiGroup)
+			return;
 		playableManager.SetPlayablePlayerGroupId(playableContainer.GetRplId(), aiGroup.GetGroupID());
 		int playerId = playableManager.GetPlayerByPlayableRemembered(oldPlayableComponent.GetRplId());
-		VoNRoomsManager.MoveToRoom(playerId, "", "");
+		VoNChannelsManager.MoveToRoom(playerId, "", "");
 		if (playerId > -1)
 		{
-			GetGame().GetCallqueue().CallLater(RPC_ForceRespawnPlayerLate2, 500, false, playerId, playableContainer);
+			GetGame().GetCallqueue().CallLater(ForceRespawnPlayerLate2, 500, false, playerId, playableContainer);
 		}
 	}
-	void RPC_ForceRespawnPlayerLate2(int playerId, PS_PlayableComponent playable)
+	void ForceRespawnPlayerLate2(int playerId, PS_PlayableComponent playable)
 	{
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
-		playableManager.SetPlayerPlayable(playerId, playable.GetRplId());
+		playableManager.SetPlayerToSlot(playable.GetRplId(), playerId);
 		ForceSwitch(playerId);
 	}
 
@@ -402,6 +417,17 @@ class PS_PlayableControllerComponent : ScriptComponent
 			return;
 
 		onPlayerRoleChanged.Insert(OnPlayerRoleChange);
+		
+		gameModeCoop.GetOnPlayerDisconnected().Insert(OnPlayerDisconnected);
+	}
+	
+	void OnPlayerDisconnected(int playerId, KickCauseCode cause, int timeout)
+	{
+		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
+		if (!thisPlayerController || thisPlayerController.GetPlayerId() != playerId)
+			return;
+		GetGame().GetCallqueue().Remove(UpdatePosition);
+		ClearEventMask(GetOwner(), EntityEvent.FRAME);
 	}
 
 	void OnPlayerRoleChange(int playerId, EPlayerRole roleFlags)
@@ -445,7 +471,7 @@ class PS_PlayableControllerComponent : ScriptComponent
 		{
 			PS_GameModeCoop gameModeCoop = PS_GameModeCoop.Cast(GetGame().GetGameMode());
 			if (gameModeCoop.GetState() == SCR_EGameModeState.GAME)
-				GetGame().GetCallqueue().Call(TellFuckingEditorCoreThanWeAlive, thisPlayerController.GetPlayerId(), to);
+				GetGame().GetCallqueue().Call(ForceNotifyEditorPlayerSpawned, thisPlayerController.GetPlayerId(), to);
 		}
 		if (vonTo && !vonFrom)
 		{
@@ -459,17 +485,17 @@ class PS_PlayableControllerComponent : ScriptComponent
 		}
 	}
 	
-	// There is sure no ебанорго game modes without spawns, yeah sure блять
-	void TellFuckingEditorCoreThanWeAlive(int playerId, IEntity entity)
+	// Notify editor core that player is alive (bypasses missing spawns in some game modes)
+	void ForceNotifyEditorPlayerSpawned(int playerId, IEntity entity)
 	{
 		PS_GameModeCoop gameModeCoop = PS_GameModeCoop.Cast(GetGame().GetGameMode());
 		if (gameModeCoop.IsFreezeTimeEnd() && gameModeCoop.GetDisableBuildingModeAfterFreezeTime())
 			 return;
 		SCR_BaseGameMode.Cast(GetGame().GetGameMode()).GetOnPlayerSpawned().Invoke(playerId, entity);
-		Rpc(AndFuckingServerTo, playerId, Replication.FindId(entity))
+		Rpc(ForceNotifyServerPlayerSpawned, playerId, Replication.FindItemId(entity));
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
-	void AndFuckingServerTo(int playerId, RplId entityId)
+	void ForceNotifyServerPlayerSpawned(int playerId, RplId entityId)
 	{
 		IEntity entity = IEntity.Cast(Replication.FindItem(entityId));
 		SCR_BaseGameMode.Cast(GetGame().GetGameMode()).GetOnPlayerSpawned().Invoke(playerId, entity);
@@ -484,6 +510,8 @@ class PS_PlayableControllerComponent : ScriptComponent
 			return;
 		}
 		
+		if (!GetGame().GetPlayerController())
+			return;
 		if (PS_PlayersHelper.IsAdminOrServer())
 			return;
 		
@@ -525,8 +553,6 @@ class PS_PlayableControllerComponent : ScriptComponent
 			actionManager.SetActionValue("CharacterRight", 0);
 			actionManager.SetActionValue("CharacterTurnUp", 0);
 			actionManager.SetActionValue("CharacterTurnRight", 0);
-			actionManager.SetActionValue("CharacterTurnUp", 0);
-			actionManager.SetActionValue("CharacterTurnRight", 0);
 			actionManager.SetActionValue("GetOut", 0);
 			actionManager.SetActionValue("JumpOut", 0);
 			actionManager.SetActionValue("CharacterStand", 0);
@@ -555,6 +581,13 @@ class PS_PlayableControllerComponent : ScriptComponent
 					}
 				}
 			}
+		}
+		
+		if (character)
+		{
+			SCR_ChimeraCharacter chimeraChar = SCR_ChimeraCharacter.Cast(character);
+			if (chimeraChar)
+				chimeraChar.GetDamageManager().SetHealthScaled(1);
 		}
 	}
 	
@@ -666,7 +699,7 @@ class PS_PlayableControllerComponent : ScriptComponent
 
 	void ChangeFactionKey(int playerId, FactionKey factionKey)
 	{
-		Rpc(RPC_ChangeFactionKey, playerId, factionKey)
+		Rpc(RPC_ChangeFactionKey, playerId, factionKey);
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
 	void RPC_ChangeFactionKey(int playerId, FactionKey factionKey)
@@ -677,11 +710,6 @@ class PS_PlayableControllerComponent : ScriptComponent
 		// If not admin you can change only herself
 		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
 		EPlayerRole playerRole = playerManager.GetPlayerRoles(thisPlayerController.GetPlayerId());
-
-		// Check faction balance
-		PS_GameModeCoop gameModeCoop = PS_GameModeCoop.Cast(GetGame().GetGameMode());
-		if (!SCR_Global.IsAdmin(thisPlayerController.GetPlayerId()) && !gameModeCoop.CanJoinFaction(factionKey, playableManager.GetPlayerFactionKey(playerId)))
-			return;
 
 		if (thisPlayerController.GetPlayerId() != playerId && playerRole == EPlayerRole.NONE)
 			return;
@@ -713,16 +741,20 @@ class PS_PlayableControllerComponent : ScriptComponent
 	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
 	void RPC_MoveVoNToRoom(int playerId, FactionKey factionKey, string roomName)
 	{
-		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
+		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
+		if (playerId != thisPlayerController.GetPlayerId() && !SCR_Global.IsAdmin(thisPlayerController.GetPlayerId()))
+			return;
 
-		PS_VoNRoomsManager VoNRoomsManager = PS_VoNRoomsManager.GetInstance();
-		VoNRoomsManager.MoveToRoom(playerId, factionKey, roomName);
+		PS_VoNChannelsManager VoNChannelsManager = PS_VoNChannelsManager.GetInstance();
+		VoNChannelsManager.MoveToRoom(playerId, factionKey, roomName);
 	}
 
 	PS_LobbyVoNComponent GetVoN()
 	{
 		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
 		IEntity entity = thisPlayerController.GetControlledEntity();
+		if (!entity)
+			return null;
 		PS_LobbyVoNComponent von = PS_LobbyVoNComponent.Cast(entity.FindComponent(PS_LobbyVoNComponent));
 		return von;
 	}
@@ -730,12 +762,24 @@ class PS_PlayableControllerComponent : ScriptComponent
 	{
 		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
 		IEntity entity = thisPlayerController.GetControlledEntity();
+		if (!entity)
+			return null;
 		SCR_GadgetManagerComponent gadgetManager = SCR_GadgetManagerComponent.Cast(entity.FindComponent(SCR_GadgetManagerComponent));
+		if (!gadgetManager)
+			return null;
 		array<SCR_GadgetComponent> radios = gadgetManager.GetGadgetsByType(EGadgetType.RADIO);
+		if (!radios || radios.Count() <= radioId)
+			return null;
 		IEntity radioEntity = radios[radioId].GetOwner();
+		if (!radioEntity)
+			return null;
 		BaseRadioComponent radio = BaseRadioComponent.Cast(radioEntity.FindComponent(BaseRadioComponent));
+		if (!radio)
+			return null;
 		radio.SetPower(true);
 		RadioTransceiver transiver = RadioTransceiver.Cast(radio.GetTransceiver(0));
+		if (!transiver)
+			return null;
 		transiver.SetFrequency(radioId + 1);
 		return transiver;
 	}
@@ -744,6 +788,8 @@ class PS_PlayableControllerComponent : ScriptComponent
 		UpdatePosition(true);
 		GetGame().GetCallqueue().Remove(LobbyVoNDisableDelayed);
 		PS_LobbyVoNComponent von = GetVoN();
+		if (!von)
+			return;
 		von.SetTransmitRadio(GetVoNTransiver(1));
 		von.SetCommMethod(ECommMethod.SQUAD_RADIO);
 		von.SetCapture(true);
@@ -753,6 +799,8 @@ class PS_PlayableControllerComponent : ScriptComponent
 		UpdatePosition(true);
 		GetGame().GetCallqueue().Remove(LobbyVoNDisableDelayed);
 		PS_LobbyVoNComponent von = GetVoN();
+		if (!von)
+			return;
 		von.SetTransmitRadio(GetVoNTransiver(0));
 		von.SetCommMethod(ECommMethod.SQUAD_RADIO);
 		von.SetCapture(true);
@@ -784,9 +832,14 @@ class PS_PlayableControllerComponent : ScriptComponent
 		if (radios.Count() > 0)
 		{
 			BaseRadioComponent radio = BaseRadioComponent.Cast(radios[0].GetOwner().FindComponent(BaseRadioComponent));
-			radio.SetEncryptionKey(VoNKey);
-			radio = BaseRadioComponent.Cast(radios[1].GetOwner().FindComponent(BaseRadioComponent));
-			radio.SetEncryptionKey(VoNKeyLocal);
+			if (radio)
+				radio.SetEncryptionKey(VoNKey);
+		}
+		if (radios.Count() > 1)
+		{
+			BaseRadioComponent radioLocal = BaseRadioComponent.Cast(radios[1].GetOwner().FindComponent(BaseRadioComponent));
+			if (radioLocal)
+				radioLocal.SetEncryptionKey(VoNKeyLocal);
 		}
 	}
 	bool isVonInit()
@@ -805,7 +858,11 @@ class PS_PlayableControllerComponent : ScriptComponent
 	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
 	void RPC_GetArmaIdFromServer_Server(int playerId)
 	{
-		string playerUUID = GetGame().GetBackendApi().GetPlayerUID(playerId);
+		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
+		if (playerId != thisPlayerController.GetPlayerId() && !SCR_Global.IsAdmin(thisPlayerController.GetPlayerId()))
+			return;
+
+		string playerUUID = GetGame().GetBackendApi().GetPlayerIdentityId(playerId);
 		Rpc(RPC_GetArmaIdFromServer_Owner, playerUUID);
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Owner)]
@@ -815,6 +872,16 @@ class PS_PlayableControllerComponent : ScriptComponent
 	}
 
 	// ------------------ Observer camera controlls ------------------
+	void SwitchToObserverServer()
+	{
+		Rpc(RPC_SwitchToObserverServer);
+	}
+	[RplRpc(RplChannel.Reliable, RplRcver.Owner)]
+	void RPC_SwitchToObserverServer()
+	{
+		SwitchToObserver(null);
+	}
+
 	void SaveCameraTransform()
 	{
 		SCR_CameraEditorComponent cameraManager = SCR_CameraEditorComponent.Cast(SCR_BaseEditorComponent.GetInstance(SCR_CameraEditorComponent, false));
@@ -869,7 +936,7 @@ class PS_PlayableControllerComponent : ScriptComponent
 	// Force change game state
 	void ForceGameStart()
 	{
-		Rpc(RPC_ForceGameStart)
+		Rpc(RPC_ForceGameStart);
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
 	protected void RPC_ForceGameStart()
@@ -894,7 +961,7 @@ class PS_PlayableControllerComponent : ScriptComponent
 	void RPC_ForceSwitch(int playerId)
 	{
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
-		playableManager.ForceSwitch(playerId)
+		playableManager.ForceSwitch(playerId);
 	}
 
 	// Get controll on selected playable entity
@@ -904,8 +971,19 @@ class PS_PlayableControllerComponent : ScriptComponent
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 		if (!playableManager)
 			return;
-		if (playableManager.GetPlayableByPlayer(thisPlayerController.GetPlayerId()) == RplId.Invalid())
+		RplId slotId = playableManager.GetPlayableByPlayer(thisPlayerController.GetPlayerId());
+		PS_DebugLogger.LogImportant("ApplyPlayable CLIENT slotId=" + slotId.ToString() + " playerId=" + thisPlayerController.GetPlayerId().ToString());
+		if (slotId == RplId.Invalid())
+		{
+			PS_DebugLogger.LogImportant("ApplyPlayable CLIENT: slot INVALID, switching to observer");
 			SwitchToObserver(null);
+		}
+		Rpc(RPC_ApplyPlayable);
+	}
+	
+	// Called from PS_GameModeCoop broadcast handler — sends deploy RPC without stale map check
+	void RequestDeployFromClient()
+	{
 		Rpc(RPC_ApplyPlayable);
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
@@ -913,13 +991,19 @@ class PS_PlayableControllerComponent : ScriptComponent
 	{
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 		PlayerController playerController = PlayerController.Cast(GetOwner());
+		int playerId = playerController.GetPlayerId();
+		RplId slotId = playableManager.GetPlayableByPlayer(playerId);
+		IEntity entity = IEntity.Cast(Replication.FindItem(slotId));
+		string entState = "NULL";
+		if (entity) entState = "ALIVE";
+		PS_DebugLogger.LogImportant("RPC_ApplyPlayable RECEIVED slotId=" + slotId.ToString() + " entity=" + entState, playerId);
 		PS_GameModeCoop gameMode = PS_GameModeCoop.Cast(GetGame().GetGameMode());
-		playableManager.ApplyPlayable(playerController.GetPlayerId());
+		playableManager.ApplyPlayable(playerId);
 	}
 
 	void UnpinPlayer(int playerId)
 	{
-		Rpc(RPC_UnpinPlayer, playerId)
+		Rpc(RPC_UnpinPlayer, playerId);
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
 	protected void RPC_UnpinPlayer(int playerId)
@@ -935,7 +1019,7 @@ class PS_PlayableControllerComponent : ScriptComponent
 
 	void PinPlayer(int playerId)
 	{
-		Rpc(RPC_PinPlayer, playerId)
+		Rpc(RPC_PinPlayer, playerId);
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
 	protected void RPC_PinPlayer(int playerId)
@@ -951,17 +1035,14 @@ class PS_PlayableControllerComponent : ScriptComponent
 
 	void KickPlayer(int playerId)
 	{
-		Rpc(RPC_KickPlayer, playerId)
+		Rpc(RPC_KickPlayer, playerId);
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
 	protected void RPC_KickPlayer(int playerId)
 	{
 		PlayerManager playerManager = GetGame().GetPlayerManager();
-
-		// If not admin you can change only herself
 		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
-		EPlayerRole playerRole = playerManager.GetPlayerRoles(thisPlayerController.GetPlayerId());
-		if (playerRole == EPlayerRole.NONE)
+		if (!SCR_Global.IsAdmin(thisPlayerController.GetPlayerId()))
 			return;
 
 		playerManager.KickPlayer(playerId, PlayerManagerKickReason.KICK, 0);
@@ -970,7 +1051,7 @@ class PS_PlayableControllerComponent : ScriptComponent
 	// -------------------- Set ---------------------
 	void SetPlayerState(int playerId, PS_EPlayableControllerState state)
 	{
-		Rpc(RPC_SetPlayerState, playerId, state)
+		Rpc(RPC_SetPlayerState, playerId, state);
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
 	protected void RPC_SetPlayerState(int playerId, PS_EPlayableControllerState state)
@@ -987,33 +1068,127 @@ class PS_PlayableControllerComponent : ScriptComponent
 		playableManager.SetPlayerState(playerId, state);
 	}
 
-	void SetPlayablePlayer(RplId playableId, int playerId)
+	bool CanPlayerSetToSlot(RplId slotId, int playerId)
 	{
-		Rpc(RPC_SetPlayablePlayer, playableId, playerId);
+		bool isAdmin = PS_PlayersHelper.IsAdminOrServer();
+		PS_GameModeCoop gameMode = PS_GameModeCoop.Cast(GetGame().GetGameMode());
+		if (!gameMode)
+		{
+			PS_DebugLogger.LogError("CanPlayerSetToSlot: gameMode null — allowing slot assignment");
+			return true;
+		}
+		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
+		if (!playableManager)
+		{
+			PS_DebugLogger.LogError("CanPlayerSetToSlot: playableManager null — allowing slot assignment");
+			return true;
+		}
+		SCR_EGameModeState state = gameMode.GetState();
+		RplId prevSlotId;
+		bool foundPrevSlot = playableManager.FindPlayerSlotById(playerId, prevSlotId) && prevSlotId != RplId.Invalid();
+
+		if (state == SCR_EGameModeState.BRIEFING && foundPrevSlot && !isAdmin)
+			return false;
+
+		if (state == SCR_EGameModeState.GAME && foundPrevSlot && !playableManager.IsSlotCharacterDestroyed(prevSlotId) && !isAdmin)
+			return false;
+
+		return true;
 	}
+
+	void SetPlayerToSlot(RplId slotId, int playerId)
+	{
+		if (!CanPlayerSetToSlot(slotId, playerId))
+			return;
+		Rpc(RPC_SetPlayerToSlot, slotId, playerId);
+	}
+
 	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
-	protected void RPC_SetPlayablePlayer(RplId playableId, int playerId)
+	void RPC_SetPlayerToSlot(RplId slotId, int playerId)
 	{
 		PlayerManager playerManager = GetGame().GetPlayerManager();
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
-
-		// You can't change playable if pinned and not admin
 		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
-		EPlayerRole playerRole = playerManager.GetPlayerRoles(thisPlayerController.GetPlayerId());
+		int thisPlayerId = thisPlayerController.GetPlayerId();
+		EPlayerRole playerRole = playerManager.GetPlayerRoles(thisPlayerId);
+
+		if (thisPlayerId != playerId && playerRole == EPlayerRole.NONE)
+			return;
+
 		if (playableManager.GetPlayerPin(playerId) && playerRole == EPlayerRole.NONE)
 			return;
 
-		// Check faction balance
-		PS_GameModeCoop gameModeCoop = PS_GameModeCoop.Cast(GetGame().GetGameMode());
-		PS_PlayableContainer playableContainer = playableManager.GetPlayableById(playableId);
-		if (playableContainer)
+		if (slotId == RplId.Invalid())
 		{
-			FactionKey factionKey = playableContainer.GetFactionKey();
-			if (playerId >= 0 && !SCR_Global.IsAdmin(thisPlayerController.GetPlayerId()) && !gameModeCoop.CanJoinFaction(factionKey, playableManager.GetPlayerFactionKey(playerId)))
-				return;
+			if (playerId != thisPlayerId)
+				playableManager.NotifyKick(playerId);
+			playableManager.SetPlayerToSlot(slotId, playerId);
+			return;
 		}
 
-		playableManager.SetPlayablePlayer(playableId, playerId);
+
+		if (!playableManager.IsSlotAvailable(slotId) && !SCR_Global.IsAdmin(thisPlayerId))
+			return;
+
+		if (playableManager.IsSlotCharacterDestroyed(slotId))
+			return;
+
+		if (playableManager.IsSlotLocked(slotId) && !SCR_Global.IsAdmin(thisPlayerId))
+			return;
+
+		int currentPlayerId = playableManager.GetPlayerByPlayableRemembered(slotId);
+		if (currentPlayerId != -1 && currentPlayerId != playerId && !SCR_Global.IsAdmin(thisPlayerId))
+			return;
+
+		playableManager.SetPlayerToSlot(slotId, playerId);
+
+		if (playerId != thisPlayerId)
+			playableManager.SetPlayerPin(playerId, true);
+	}
+
+	void KickPlayerFromSlot(RplId slotId)
+	{
+		int localPlayerId = SCR_PlayerController.Cast(GetOwner()).GetPlayerId();
+		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
+
+		if (playableManager.IsSlotAvailable(slotId))
+			return;
+
+		if (!PS_PlayersHelper.IsAdminOrServer() && !playableManager.IsPlayerGroupLeader(localPlayerId))
+			return;
+
+		Rpc(RPC_KickPlayerFromSlot, slotId, localPlayerId);
+	}
+
+	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
+	void RPC_KickPlayerFromSlot(RplId slotId, int kickingPlayerId)
+	{
+		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
+		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
+		int senderId = thisPlayerController.GetPlayerId();
+		if (!SCR_Global.IsAdmin(senderId) && !playableManager.IsPlayerGroupLeader(senderId))
+			return;
+		playableManager.KickPlayerFromSlot(slotId, senderId);
+	}
+
+	void SetSlotLockState(RplId slotId, bool isLocked)
+	{
+		if (!PS_PlayersHelper.IsAdminOrServer())
+			return;
+		Rpc(RPC_SetSlotLockState, slotId, isLocked);
+	}
+
+	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
+	void RPC_SetSlotLockState(RplId slotId, bool isLocked)
+	{
+		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
+		if (!SCR_Global.IsAdmin(thisPlayerController.GetPlayerId()))
+			return;
+
+		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
+		if (!playableManager.IsSlotAvailable(slotId))
+			return;
+		playableManager.SetSlotLockState(slotId, isLocked);
 	}
 
 	void SetPlayableVehicleLocked(RplId vehicleId, bool lock)
@@ -1024,61 +1199,12 @@ class PS_PlayableControllerComponent : ScriptComponent
 	protected void RPC_SetPlayableVehicleLocked(RplId vehicleId, bool lock)
 	{
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
-		
+
 		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
 		if (!SCR_Global.IsAdmin(thisPlayerController.GetPlayerId()))
 			return;
-		
+
 		playableManager.SetPlayableVehicleLocked(vehicleId, lock);
-	}
-	
-	void SetPlayerPlayable(int playerId, RplId playableId)
-	{
-		Rpc(RPC_SetPlayerPlayable, playerId, playableId);
-	}
-	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
-	protected void RPC_SetPlayerPlayable(int playerId, RplId playableId)
-	{
-		PlayerManager playerManager = GetGame().GetPlayerManager();
-		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
-
-		// You can't change playable if pinned and not admin
-		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
-		EPlayerRole playerRole = playerManager.GetPlayerRoles(thisPlayerController.GetPlayerId());
-		if (playableManager.GetPlayerPin(playerId) && playerRole == EPlayerRole.NONE)
-			return;
-
-		// don't check other staff if empty playable
-		if (playableId == RplId.Invalid()) {
-			if (playerId != thisPlayerController.GetPlayerId())
-				playableManager.NotifyKick(playerId);
-			playableManager.SetPlayerPlayable(playerId, playableId);
-			return;
-		}
-
-		// Check faction balance
-		PS_GameModeCoop gameModeCoop = PS_GameModeCoop.Cast(GetGame().GetGameMode());
-		PS_PlayableContainer playableContainer = playableManager.GetPlayableById(playableId);
-		if (playableContainer)
-		{
-			FactionKey factionKey = playableContainer.GetFactionKey();
-			if (playerId >= 0 && !SCR_Global.IsAdmin(thisPlayerController.GetPlayerId()) && !gameModeCoop.CanJoinFaction(factionKey, playableManager.GetPlayerFactionKey(playerId)))
-				return;
-		}
-
-		SCR_ChimeraCharacter playableCharacter = SCR_ChimeraCharacter.Cast(playableContainer.GetPlayableComponent().GetOwner());
-
-		// Check is playable already selected or dead
-		int curretPlayerId = playableManager.GetPlayerByPlayable(playableId);
-		if (playableCharacter.GetDamageManager().IsDestroyed() || (curretPlayerId != -1 && curretPlayerId != playerId)) {
-			return;
-		}
-
-		playableManager.SetPlayerPlayable(playerId, playableId);
-
-		// Pin player if setted by admin
-		if (playerId != thisPlayerController.GetPlayerId())
-			playableManager.SetPlayerPin(playerId, true);
 	}
 
 	void SetObjectiveCompleteState(PS_Objective objective, bool complete)
@@ -1089,6 +1215,10 @@ class PS_PlayableControllerComponent : ScriptComponent
 	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
 	void RPC_SetObjectiveCompleteState(RplId objectiveId, bool complete)
 	{
+		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
+		if (!SCR_Global.IsAdmin(thisPlayerController.GetPlayerId()))
+			return;
+
 		PS_Objective objective = PS_Objective.Cast(Replication.FindItem(objectiveId));
 		if (objective)
 			objective.SetCompleted(complete);

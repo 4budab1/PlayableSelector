@@ -6,9 +6,9 @@ class PS_SlotsReserverClass: ScriptComponentClass
 
 class PS_ReservedPlayerIdentitiesConfig: JsonApiStruct
 {
-	ref array<string> GUIDS = new array<string>;
-	
-	void DSGameConfig()
+	ref array<string> GUIDS = new array<string>();
+
+	void PS_ReservedPlayerIdentitiesConfig()
 	{
 		RegV("GUIDS");
 	}
@@ -35,7 +35,7 @@ class PS_SlotsReserver : ScriptComponent
 		SCR_BaseGameMode gameMode = SCR_BaseGameMode.Cast(GetGame().GetGameMode());
 		gameMode.GetOnPlayerAuditSuccess().Insert(CheckReserved);
 		
-		SCR_JsonLoadContext configLoadContext = new SCR_JsonLoadContext();
+		JsonLoadContext configLoadContext = new JsonLoadContext();
 		if (configLoadContext.LoadFromFile(m_configFilePath))
 			if (configLoadContext.ReadValue("", m_cReservedPlayerIdentitiesConfig))
 			{
@@ -65,11 +65,13 @@ class PS_SlotsReserver : ScriptComponent
 		
 		PlayerManager playerManager = GetGame().GetPlayerManager();
 		
-		string GUID = GetGame().GetBackendApi().GetPlayerIdentityId(playerId);
+		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
+		string GUID = playableManager.GetPlayerGUIDById(playerId);
+		if (GUID == "")
+			return;
 		if (m_aPlayerIdentities.Contains(GUID)) 
 			return;
 		
-		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 		if (playableManager.GetPlayableByPlayer(playerId) != RplId.Invalid())
 			return;
 		

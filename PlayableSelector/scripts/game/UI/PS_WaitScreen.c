@@ -39,9 +39,11 @@ class PS_WaitScreen: MenuBase
 				if (WBVoN)
 				{
 					PS_PlayableComponent WBPlayableComponent = PS_PlayableComponent.Cast(WBCharacter.FindComponent(PS_PlayableComponent));
+				if (WBPlayableComponent)
 					WBPlayableComponent.SetPlayable(true);
-					RplComponent rplComponent = RplComponent.Cast(WBCharacter.FindComponent(RplComponent));
-					PS_PlayableManager.GetInstance().SetPlayerPlayable(SCR_PlayerController.GetLocalPlayerId(), rplComponent.Id());
+				RplComponent rplComponent = RplComponent.Cast(WBCharacter.FindComponent(RplComponent));
+				if (rplComponent)
+					PS_PlayableManager.GetInstance().SetPlayerToSlot(rplComponent.Id(), SCR_PlayerController.GetLocalPlayerId());
 					gameMode.StartGameMode();
 				}
 			}
@@ -62,10 +64,10 @@ class PS_WaitScreen: MenuBase
 			return;
 		}
 		
-		PS_VoNRoomsManager VoNRoomsManager = PS_VoNRoomsManager.GetInstance();
-		if (!VoNRoomsManager.IsReplicated())
+		PS_VoNChannelsManager VoNChannelsManager = PS_VoNChannelsManager.GetInstance();
+		if (!VoNChannelsManager.IsReplicated())
 		{
-			m_wInfoText.SetText("Awaiting VoNRoomsManager replication.");
+			m_wInfoText.SetText("Awaiting VoNChannelsManager replication.");
 			return;
 		}
 		
@@ -82,27 +84,28 @@ class PS_WaitScreen: MenuBase
 		}
 		
 		PS_PlayableControllerComponent playableControllerComponent = PS_PlayableControllerComponent.Cast(playerController.FindComponent(PS_PlayableControllerComponent));
-		if (!playableControllerComponent.isVonInit())
+		if (!playableControllerComponent || !playableControllerComponent.isVonInit())
 		{
 			m_wInfoText.SetText("Awaiting VoN Initialization.");
 			return;
 		}
 		
-		int publicRoomId = VoNRoomsManager.GetRoomWithFaction("", "#PS-VoNRoom_Public" + playerController.GetPlayerId().ToString());
-		int globalRoomId = VoNRoomsManager.GetRoomWithFaction("", "#PS-VoNRoom_Global");
-		if (publicRoomId == -1 || globalRoomId == -1)
+		int globalRoomId = VoNChannelsManager.GetRoomWithFaction("", "#PS-VoNRoom_Global");
+		if (globalRoomId == -1)
 		{
 			m_wInfoText.SetText("Awaiting VoN room creation.");
 			return;
 		}
 		
-		int roomId = VoNRoomsManager.GetPlayerRoom(playerController.GetPlayerId());
-		string roomKey = VoNRoomsManager.GetRoomName(roomId);
+		int roomId = VoNChannelsManager.GetPlayerRoom(playerController.GetPlayerId());
+		string roomKey = VoNChannelsManager.GetRoomName(roomId);
 		
 		m_bWaitEnded = true;
 		Close();
 		
 		PS_PlayableControllerComponent playableController = PS_PlayableControllerComponent.Cast(playerController.FindComponent(PS_PlayableControllerComponent));
+		if (!playableController)
+			return;
 		playableController.SetPlayerState(playerController.GetPlayerId(), PS_EPlayableControllerState.NotReady);
 		playableController.MoveToVoNRoomByKey(playerController.GetPlayerId(), roomKey);
 		playableController.SwitchToMenu(gameMode.GetState());

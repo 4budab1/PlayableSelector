@@ -8,7 +8,7 @@ class PS_GameModeCoopClass : SCR_BaseGameModeClass
 
 class PS_GameModeCoop : SCR_BaseGameMode
 {
-	[Attribute("120000", UIWidgets.EditBox, "Time during which disconnected players reserve role for reconnection in ms, -1 for infinity time", "", category: "Reforger Lobby")]
+	[RplProp(), Attribute("120000", UIWidgets.EditBox, "Time during which disconnected players reserve role for reconnection in ms, -1 for infinity time", "", category: "Reforger Lobby")]
 	int m_iReconnectTime;
 
 	[Attribute("-1", UIWidgets.EditBox, "Time during which disconnected players reserve role for reconnection in ms, -1 for infinity time", "", category: "Reforger Lobby")]
@@ -17,31 +17,31 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	[Attribute("1", uiwidget: UIWidgets.CheckBox, "Game may be started only if admin on server.", category: "Reforger Lobby")]
 	protected bool m_bAdminMode;
 
-	[Attribute("0", uiwidget: UIWidgets.CheckBox, "Anyone can open lobby in game stage.", category: "Reforger Lobby")]
+	[RplProp(), Attribute("0", uiwidget: UIWidgets.CheckBox, "Anyone can open lobby in game stage.", category: "Reforger Lobby")]
 	protected bool m_bTeamSwitch;
 
-	//[Attribute("0", uiwidget: UIWidgets.CheckBox, "Faction locked after selection.", category: "Reforger Lobby")]
+	[RplProp(), Attribute("0", uiwidget: UIWidgets.CheckBox, "Faction locked after selection.", category: "Reforger Lobby")]
 	protected bool m_bFactionLock;
 
-	[Attribute("0", uiwidget: UIWidgets.CheckBox, "Markers can be placed only by squad leaders and only on briefing.", category: "Reforger Lobby")]
+	[RplProp(), Attribute("0", uiwidget: UIWidgets.CheckBox, "Markers can be placed only by squad leaders and only on briefing.", category: "Reforger Lobby")]
 	protected bool m_bMarkersOnlyOnBriefing;
 
 	[Attribute("0", UIWidgets.CheckBox, "Instead of just the leaders, every member is moved to their factions HQ room for a common briefing.\nMoving back to group channel is still possible.", category: "Reforger Lobby")]
 	bool m_bPublicCommandBriefing;
 
-	[Attribute("0", uiwidget: UIWidgets.CheckBox, "Remove units not occupied by players.", category: "Reforger Lobby")]
+	[RplProp(), Attribute("0", uiwidget: UIWidgets.CheckBox, "Remove units not occupied by players.", category: "Reforger Lobby")]
 	protected bool m_bRemoveRedundantUnits;
 
-	[Attribute("0", uiwidget: UIWidgets.CheckBox, "Remove default markers on squad leaders.", category: "Reforger Lobby")]
+	[RplProp(), Attribute("0", uiwidget: UIWidgets.CheckBox, "Remove default markers on squad leaders.", category: "Reforger Lobby")]
 	protected bool m_bRemoveSquadMarkers;
 
-	[Attribute("60000", UIWidgets.EditBox, "Time in milliseconds before restriction zones are removed.", category: "Reforger Lobby")]
+	[RplProp(), Attribute("60000", UIWidgets.EditBox, "Time in milliseconds before restriction zones are removed.", category: "Reforger Lobby")]
 	int m_iFreezeTime;
 	
 	[Attribute("0", UIWidgets.EditBox, "Time in milliseconds before characters are activated.", category: "Reforger Lobby (WIP)")]
 	int m_iDisableTime;
 
-	[Attribute("0", UIWidgets.CheckBox, "Disables text chat for alive players on game stage. Admins can always see text chat.", category: "Reforger Lobby")]
+	[RplProp(), Attribute("0", UIWidgets.CheckBox, "Disables text chat for alive players on game stage. Admins can always see text chat.", category: "Reforger Lobby")]
 	protected bool m_bDisableChat;
 
 	[RplProp()]
@@ -51,8 +51,11 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	[RplProp()]
 	protected float m_fGameStartElapsedTime = 0;
 
-	[Attribute("0", UIWidgets.CheckBox, "Creates a whitelist on the server for players who have taken roles and also for players specified in $profile:PS_SlotsReserver_Config.json and kicks everyone else.", category: "Reforger Lobby")]
+	[Attribute("0", uiwidget: UIWidgets.CheckBox, "Creates a whitelist on the server for players who have taken roles and also for players specified in $profile:PS_SlotsReserver_Config.json and kicks everyone else.", category: "Reforger Lobby")]
 	protected bool m_bReserveSlots;
+
+	[Attribute("3", UIWidgets.EditBox, "Ready countdown in seconds before game auto-starts when all players are ready.", "", category: "Reforger Lobby")]
+	int m_iReadyCountdown;
 
 	[Attribute("", UIWidgets.Auto, "", category: "Reforger Lobby")]
 	protected ref array<ref PS_FactionRespawnCount> m_aFactionRespawnCount;
@@ -67,21 +70,18 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	[Attribute("0", UIWidgets.CheckBox, "", category: "Reforger Lobby")]
 	protected bool m_bDisableGarbageSystem;
 
-	[Attribute("0", UIWidgets.CheckBox, "", category: "Reforger Lobby")]
+	[RplProp(), Attribute("0", UIWidgets.CheckBox, "", category: "Reforger Lobby")]
 	protected bool m_bFriendliesSpectatorOnly;
 
 	[Attribute("0", UIWidgets.CheckBox, "", category: "Reforger Lobby")]
 	protected bool m_bFreezeTimeShootingForbiden;
 	
-	[Attribute("1", UIWidgets.CheckBox, "", category: "Reforger Lobby")]
+	[RplProp(), Attribute("1", UIWidgets.CheckBox, "", category: "Reforger Lobby")]
 	protected bool m_bDisableArmaVision;
 	
 	[Attribute("0", UIWidgets.CheckBox, "", category: "Reforger Lobby")]
 	protected bool m_bDisableBuildingModeAfterFreezeTime;
 	
-	[Attribute("-1", UIWidgets.Auto, "", category: "Reforger Lobby (WIP)")]
-	protected int m_iFactionsBalance;
-
 	[Attribute("0", UIWidgets.CheckBox, "", category: "Reforger Lobby (WIP)")]
 	protected bool m_bShowCutscene;
 
@@ -145,24 +145,22 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		m_playableManager = PS_PlayableManager.GetInstance();
 		m_CutsceneManager = PS_CutsceneManager.GetInstance();
 
-		foreach (PS_FactionRespawnCount factionRespawnCount : m_aFactionRespawnCount)
+		if (m_aFactionRespawnCount)
 		{
-			m_mFactionRespawnCount.Insert(
-				factionRespawnCount.m_sFactionKey,
-				factionRespawnCount
-			);
+			foreach (PS_FactionRespawnCount factionRespawnCount : m_aFactionRespawnCount)
+			{
+				m_mFactionRespawnCount.Insert(
+					factionRespawnCount.m_sFactionKey,
+					factionRespawnCount
+				);
+			}
 		}
-		/*
-		string loadSave = GameSessionStorage.s_Data.Get("SCR_SaveFileManager_FileNameToLoad");
-		if (loadSave != "")
-		{
-			SCR_SaveManagerCore saveManager = GetGame().GetSaveManager();
-			saveManager.Load(loadSave);
-		}
-		*/
+
 		if (Replication.IsServer())
 		{
-			PS_VoNRoomsManager.GetInstance().GetOrCreateRoomWithFaction("", "#PS-VoNRoom_Global");
+			PS_VoNChannelsManager vonManager = PS_VoNChannelsManager.GetInstance();
+			if (vonManager)
+				vonManager.GetOrCreateRoomWithFaction("", "#PS-VoNRoom_Global");
 
 			m_fCurrentFreezeTime = m_iReconnectTime;
 			Replication.BumpMe();
@@ -188,7 +186,8 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	void ForceFramerate()
 	{
 		BaseContainer video = GetGame().GetEngineUserSettings().GetModule("VideoUserSettings");
-		if (PS_GameModeCoop.Cast(GetGame().GetGameMode()).GetState() == SCR_EGameModeState.GAME)
+		PS_GameModeCoop gm = PS_GameModeCoop.Cast(GetGame().GetGameMode());
+		if (gm && gm.GetState() == SCR_EGameModeState.GAME)
 		{
 			video.Set("MaxFps", m_iOldMenuFramerate);
 			GetGame().UserSettingsChanged();
@@ -278,7 +277,7 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		invoker = chatPanelManager.GetCommandInvoker("rei");
 		invoker.Insert(RespawnInit_Callback);
 		invoker = chatPanelManager.GetCommandInvoker("unc");
-		invoker.Insert(ForceUnconsious_Callback);
+		invoker.Insert(ForceUnconscious_Callback);
 		invoker = chatPanelManager.GetCommandInvoker("spw");
 		invoker.Insert(SpawnInit_Callback);
 		invoker = chatPanelManager.GetCommandInvoker("spp");
@@ -309,9 +308,9 @@ class PS_GameModeCoop : SCR_BaseGameMode
 			PS_MapMarkerBaseJson markerJson = marker.PS_GetMapMarkerBaseJson();
 			mapMarkers.m_aMapMarkers.Insert(markerJson);
 		}
-		SCR_JsonSaveContext saveContext = new SCR_JsonSaveContext();
+		JsonSaveContext saveContext = new JsonSaveContext();
 		saveContext.WriteValue("", mapMarkers);
-		System.ExportToClipboard(saveContext.ExportToString());
+		System.ExportToClipboard(saveContext.SaveToString());
 	}
 	
 	
@@ -326,8 +325,8 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		
 		string json = System.ImportFromClipboard();
 		
-		SCR_JsonLoadContext loadContext = new SCR_JsonLoadContext();
-		loadContext.ImportFromString(json);
+		JsonLoadContext loadContext = new JsonLoadContext();
+		loadContext.LoadFromString(json);
 		
 		PS_MapMarkersBaseJson mapMarkers = new PS_MapMarkersBaseJson();
 		loadContext.ReadValue("", mapMarkers);
@@ -424,7 +423,7 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		playableController.SpawnPrefab(data, "0 0 0");
 	}
 
-	void ForceUnconsious_Callback(SCR_ChatPanel panel, string data)
+	void ForceUnconscious_Callback(SCR_ChatPanel panel, string data)
 	{
 		SCR_ChimeraCharacter character = SCR_ChimeraCharacter.Cast(SCR_PlayerController.GetLocalControlledEntity());
 		if (!character)
@@ -433,9 +432,9 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		if (characterControllerComponent.IsUnconscious())
 			return;
 		characterControllerComponent.SetUnconscious(true);
-		GetGame().GetCallqueue().CallLater(ResetUnconsious, 400, false, characterControllerComponent);
+		GetGame().GetCallqueue().CallLater(ResetUnconscious, 400, false, characterControllerComponent);
 	}
-	void ResetUnconsious(CharacterControllerComponent characterControllerComponent)
+	void ResetUnconscious(CharacterControllerComponent characterControllerComponent)
 	{
 		characterControllerComponent.SetUnconscious(false);
 	}
@@ -504,6 +503,8 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	{
 		if (data == "")
 			return;
+		if (!PS_PlayersHelper.IsAdminOrServer())
+			return;
 		Resource resource = BaseContainerTools.LoadContainer(data);
 		if (!resource)
 			return;
@@ -546,15 +547,38 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	protected override void OnPlayerConnected(int playerId)
 	{
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
-		string name = GetGame().GetPlayerManager().GetPlayerName(playerId);
-		playableManager.SetPlayerName(playerId, name);
+		PlayerManager playerManager = GetGame().GetPlayerManager();
+		string name = playerManager.GetPlayerName(playerId);
+		string guid = GetGame().GetBackendApi().GetPlayerIdentityId(playerId);
+		playableManager.SetPlayerInfo(playerId, name, guid);
 
-		// TODO: remove CallLater
-		#ifdef WORKBENCH
-		GetGame().GetCallqueue().CallLater(SpawnInitialEntity, 500, false, playerId);
-		#else
-		GetGame().GetCallqueue().CallLater(SpawnInitialEntity, 100, false, playerId);
-		#endif
+		PS_DebugLogger.LogImportant("OnPlayerConnected player=" + playerId.ToString() + " name=" + name, playerId);
+
+		RplId parkedSlot;
+		if (playableManager.FindDisconnectedPlayerByGUID(guid, parkedSlot))
+		{
+			PS_DebugLogger.LogImportant("Reconnected player=" + playerId.ToString() + " recovered slot=" + parkedSlot.ToString(), playerId);
+
+			playableManager.RemoveDisconnectedPlayerInfo(guid);
+			playableManager.UpdatePlayerReconnected(playerId, guid);
+			if (parkedSlot != RplId.Invalid() && !PS_PlayableManager.GetInstance().IsSlotCharacterDestroyed(parkedSlot))
+			{
+				playableManager.SetPlayerFactionKey(playerId, playableManager.GetSlotFactionKey(parkedSlot));
+				if (GetState() == SCR_EGameModeState.GAME)
+					GetGame().GetCallqueue().CallLater(playableManager.ApplyPlayable, 200, false, playerId);
+			}
+		}
+
+		if (GetState() == SCR_EGameModeState.GAME)
+			GetGame().GetCallqueue().CallLater(SpawnInitialEntity, 200, false, playerId);
+		else
+		{
+			#ifdef WORKBENCH
+			GetGame().GetCallqueue().CallLater(SpawnInitialEntity, 500, false, playerId);
+			#else
+			GetGame().GetCallqueue().CallLater(SpawnInitialEntity, 100, false, playerId);
+			#endif
+		}
 		m_OnPlayerConnected.Invoke(playerId);
 	}
 
@@ -565,124 +589,41 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		return super.HandlePlayerKilled(playerId, playerEntity, killerEntity, killer);
 	}
 
-	// Update state for disconnected and start timer if need (DO NOT DELETE CONTROLED ENTITY)
 	protected override void OnPlayerDisconnected(int playerId, KickCauseCode cause, int timeout)
 	{
 		PlayerManager playerManager = GetGame().GetPlayerManager();
 		SCR_PlayerController playerController = SCR_PlayerController.Cast(playerManager.GetPlayerController(playerId));
-		PS_PlayableControllerComponent playableController = PS_PlayableControllerComponent.Cast(playerController.FindComponent(PS_PlayableControllerComponent));
 
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
-		playableManager.SetPlayerState(playerId, PS_EPlayableControllerState.Disconected);
-		if (m_iReconnectTime > 0) GetGame().GetCallqueue().CallLater(RemoveDisconnectedPlayer, m_iReconnectTime, false, playerId);
+		playableManager.SetPlayerState(playerId, PS_EPlayableControllerState.Disconnected);
+
+		PS_DebugLogger.LogImportant("OnPlayerDisconnected player=" + playerId.ToString(), playerId);
+
+		string guid = playableManager.GetPlayerGUIDById(playerId);
+		RplId controlledSlot;
+		if (playableManager.FindPlayerSlotById(playerId, controlledSlot))
+		{
+			RplComponent rpl = RplComponent.Cast(Replication.FindItem(controlledSlot));
+			if (rpl)
+				rpl.GiveExt(RplIdentity.Local(), false);
+			playableManager.AddDisconnectedPlayerInfo(guid, controlledSlot, playerId);
+			if (GetState() != SCR_EGameModeState.GAME)
+				GetGame().GetCallqueue().CallLater(RemoveDisconnectedPlayer, m_iReconnectTime, false, playerId);
+		}
+		else
+		{
+			playableManager.RemovePlayer(playerId, guid, true);
+		}
 
 		IEntity controlledEntity = playerController.GetControlledEntity();
-		if (controlledEntity) {
+		if (controlledEntity)
+		{
 			RplComponent rpl = RplComponent.Cast(controlledEntity.FindComponent(RplComponent));
-			rpl.GiveExt(RplIdentity.Local(), false);
+			if (rpl)
+				rpl.GiveExt(RplIdentity.Local(), false);
 		}
 
-		m_OnPlayerDisconnected.Invoke(playerId, cause, timeout);
-		foreach (SCR_BaseGameModeComponent comp : m_aAdditionalGamemodeComponents)
-		{
-			comp.OnPlayerDisconnected(playerId, cause, timeout);
-		}
-
-		m_OnPostCompPlayerDisconnected.Invoke(playerId, cause, timeout);
-
-		// RespawnSystemComponent is not a SCR_BaseGameModeComponent, so for now we have to
-		// propagate these events manually.
-		if (IsMaster())
-			m_pRespawnSystemComponent.OnPlayerDisconnected_S(playerId, cause, timeout);
-
-		foreach (SCR_BaseGameModeComponent comp : m_aAdditionalGamemodeComponents)
-		{
-			comp.OnPlayerDisconnected(playerId, cause, timeout);
-		}
-
-		m_OnPostCompPlayerDisconnected.Invoke(playerId, cause, timeout);
-
-		if (IsMaster())
-		{
-			if (controlledEntity)
-			{
-				if (SCR_ReconnectComponent.GetInstance())
-				{
-					if (SCR_ReconnectComponent.GetInstance().HandlePlayerDisconnect(playerId, cause))	// if conditions to allow reconnect pass, skip the entity delete
-					{
-						CharacterControllerComponent charController = CharacterControllerComponent.Cast(controlledEntity.FindComponent(CharacterControllerComponent));
-						if (charController)
-						{
-							charController.SetMovement(0, vector.Forward);
-						}
-
-						CompartmentAccessComponent compAccess = CompartmentAccessComponent.Cast(controlledEntity.FindComponent(CompartmentAccessComponent)); // TODO nullcheck
-						if (compAccess)
-						{
-							BaseCompartmentSlot compartment = compAccess.GetCompartment();
-							if (compartment)
-							{
-								CarControllerComponent carController = CarControllerComponent.Cast(compartment.GetVehicle().FindComponent(CarControllerComponent));
-								if (carController)
-								{
-									carController.Shutdown();
-									carController.StopEngine(false);
-								}
-							}
-						}
-
-						return;
-					}
-				}
-			}
-		}
-	}
-
-	bool CanJoinFaction(FactionKey factionKeyPlayer, FactionKey currentFaction)
-	{
-		if (m_iFactionsBalance == -1)
-			return true;
-		if (factionKeyPlayer == currentFaction)
-			return true;
-
-		map<FactionKey, int> players = new map<FactionKey, int>();
-		map<FactionKey, int> playables = new map<FactionKey, int>();
-		array<PS_PlayableContainer> playableComponents = m_playableManager.GetPlayablesSorted();
-		foreach (PS_PlayableContainer playable : playableComponents)
-		{
-			FactionKey factionKey = playable.GetFactionKey();
-
-			if (!players.Contains(factionKey))
-				players[factionKey] = 0;
-			if (!playables.Contains(factionKey))
-				playables[factionKey] = 0;
-
-			playables[factionKey] = playables[factionKey] + 1;
-			int playerId = m_playableManager.GetPlayerByPlayable(playable.GetRplId());
-			if (playerId > 0)
-				players[factionKey] = players[factionKey] + 1;
-		}
-		if (currentFaction != "")
-			players[currentFaction] = players[currentFaction] - 1;
-
-		float maxFaction = 0;
-		foreach (FactionKey factionKey, int count : playables)
-			if (maxFaction < count)
-				maxFaction = count;
-
-		// Scale
-		int minFaction = 999;
-		foreach (FactionKey factionKey, int count : players)
-		{
-			int scaledCount = players[factionKey] * (maxFaction / playables[factionKey]);
-			if (minFaction > scaledCount)
-				minFaction = scaledCount;
-		}
-
-		int currentCount = players[factionKeyPlayer];
-		int diff = currentCount - minFaction;
-
-		return diff <= m_iFactionsBalance;
+		SCR_BaseGameMode.DisconnectPlayerBase(this, playerId, cause, timeout, controlledEntity);
 	}
 
 	// ------------------------------------------ Actions ------------------------------------------
@@ -715,6 +656,11 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		if (!playerController) return;
 		if (playerController.GetPlayerId() == 0) return;
 		PS_PlayableControllerComponent playableController = PS_PlayableControllerComponent.Cast(playerController.FindComponent(PS_PlayableControllerComponent));
+		if (!playableController)
+		{
+			GetGame().GetCallqueue().CallLater(RPC_OpenCurrentMenu, 100, false, state);
+			return;
+		}
 		playableController.SwitchToMenu(state);
 	}
 
@@ -726,19 +672,43 @@ class PS_GameModeCoop : SCR_BaseGameMode
 			return;
 		#endif
 
-		PS_VoNRoomsManager VoNRoomsManager = PS_VoNRoomsManager.GetInstance();
+			PS_VoNChannelsManager VoNChannelsManager = PS_VoNChannelsManager.GetInstance();
 		Resource resource = Resource.Load("{ADDE38E4119816AB}Prefabs/InitialPlayer_Version2.et");
+		if (!resource.IsValid())
+			return;
+		PlayerManager playerManager = GetGame().GetPlayerManager();
+		SCR_PlayerController playerController = SCR_PlayerController.Cast(playerManager.GetPlayerController(playerId));
+		if (!playerController)
+		{
+			if (!playerManager.IsPlayerConnected(playerId))
+				return;
+			GetGame().GetCallqueue().CallLater(SpawnInitialEntity, 200, false, playerId);
+			return;
+		}
+		PS_PlayableControllerComponent playableController = PS_PlayableControllerComponent.Cast(playerController.FindComponent(PS_PlayableControllerComponent));
+		if (!playableController)
+		{
+			GetGame().GetCallqueue().CallLater(SpawnInitialEntity, 200, false, playerId);
+			return;
+		}
+
 		EntitySpawnParams params = new EntitySpawnParams();
 		GetTransform(params.Transform);
 		vector position = Vector(0, 100000, 0) + Vector(1000 * Math.Mod(playerId, 10), 5000 * Math.Floor(Math.Mod(playerId, 100) / 10), 5000 * Math.Floor(playerId / 100));
 		params.Transform[3] = position;
 		IEntity initialEntity = GetGame().SpawnEntityPrefab(resource, GetGame().GetWorld(), params);
-		PlayerManager playerManager = GetGame().GetPlayerManager();
-		SCR_PlayerController playerController = SCR_PlayerController.Cast(playerManager.GetPlayerController(playerId));
-		PS_PlayableControllerComponent playableController = PS_PlayableControllerComponent.Cast(playerController.FindComponent(PS_PlayableControllerComponent));
 		playableController.SetInitialEntity(initialEntity);
 		playerController.SetInitialMainEntity(initialEntity);
-		VoNRoomsManager.RestoreRoom(playerId);
+		if (VoNChannelsManager)
+			VoNChannelsManager.RestoreRoom(playerId);
+
+		if (GetState() == SCR_EGameModeState.GAME)
+		{
+			PS_PlayableManager pm = PS_PlayableManager.GetInstance();
+			RplId playerSlot = pm.GetPlayableByPlayer(playerId);
+			if (playerSlot == RplId.Invalid())
+				playableController.SwitchToObserverServer();
+		}
 	}
 
 	void TryRespawn(RplId playableId, int playerId)
@@ -786,8 +756,8 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		Math3D.MatrixCopy(respawnData.m_aSpawnTransform, params.Transform);
 		IEntity entity = GetGame().SpawnEntityPrefab(resource, GetGame().GetWorld(), params);
 		SCR_AIGroup aiGroup = m_playableManager.GetPlayerGroupByPlayable(respawnData.m_Id);
-		SCR_AIGroup playabelGroup = aiGroup.GetSlave();
-		playabelGroup.AddAIEntityToGroup(entity);
+		SCR_AIGroup playableGroup = aiGroup.GetSlave();
+		playableGroup.AddAIEntityToGroup(entity);
 
 		PS_PlayableComponent playableComponentNew = PS_PlayableComponent.Cast(entity.FindComponent(PS_PlayableComponent));
 		playableComponentNew.SetPlayable(true);
@@ -811,7 +781,7 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		playableComponent.CopyState(respawnData);
 		if (playerId > 0)
 		{
-			playableManager.SetPlayerPlayable(playerId, playableId);
+			playableManager.SetPlayerToSlot(playableId, playerId);
 			playableManager.ForceSwitch(playerId);
 		}
 	}
@@ -820,9 +790,17 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	{
 		if (playerId <= 0)
 			return;
-		PlayerManager playerManager = GetGame().GetPlayerManager();
+		PS_DebugLogger.LogImportant("SwitchToInitialEntity playerId=" + playerId.ToString());
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
-		playableManager.SetPlayerPlayable(playerId, RplId.Invalid());
+		RplId currentSlot = playableManager.GetPlayableByPlayer(playerId);
+		if (currentSlot != RplId.Invalid() && !playableManager.IsSlotCharacterDestroyed(currentSlot))
+		{
+			PS_DebugLogger.LogImportant("SwitchToInitialEntity SKIP: player already has valid slot=" + currentSlot.ToString());
+			playableManager.ApplyPlayable(playerId);
+			playableManager.ForceSwitch(playerId);
+			return;
+		}
+		playableManager.SetPlayerToSlot(RplId.Invalid(), playerId);
 		playableManager.ApplyPlayable(playerId);
 	}
 
@@ -830,18 +808,17 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	void RemoveDisconnectedPlayer(int playerId)
 	{
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
-		PS_EPlayableControllerState state = playableManager.GetPlayerState(playerId);
-		if (state == PS_EPlayableControllerState.Disconected)
-		{
-			playableManager.SetPlayerPlayable(playerId, RplId.Invalid());
-		}
+		string guid = playableManager.GetPlayerGUIDById(playerId);
+		playableManager.RemovePlayer(playerId, guid, true);
 	}
 
 	override void OnGameStateChanged()
 	{
 		super.OnGameStateChanged();
 
-		PS_VoNRoomsManager VoNRoomsManager = PS_VoNRoomsManager.GetInstance();
+		PS_DebugLogger.LogImportant("OnGameStateChanged state=" + SCR_Enum.GetEnumName(SCR_EGameModeState, GetState()));
+
+			PS_VoNChannelsManager VoNChannelsManager = PS_VoNChannelsManager.GetInstance();
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 		array<int> playerIds = new array<int>();
 		GetGame().GetPlayerManager().GetPlayers(playerIds);
@@ -850,28 +827,121 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		m_OnGameStateChange.Invoke(state);
 		switch (state)
 		{
-			case SCR_EGameModeState.BRIEFING: // Force move to voice rooms
-				foreach (int playerId : playerIds)
+	case SCR_EGameModeState.SLOTSELECTION:
+		if (VoNChannelsManager)
+		{
+			foreach (int playerId : playerIds)
+			{
+				int roomId = VoNChannelsManager.GetPlayerRoom(playerId);
+				string roomName = VoNChannelsManager.GetRoomName(roomId);
+				if (roomName.Contains("#PS-VoNRoom_Public"))
+					VoNChannelsManager.MoveToRoom(playerId, "", "#PS-VoNRoom_Global");
+			}
+		}
+		break;
+	case SCR_EGameModeState.BRIEFING:
+		if (VoNChannelsManager)
+		{
+			// Collect factions with players and squads with players
+			map<FactionKey, bool> factionsWithPlayers = new map<FactionKey, bool>();
+			map<FactionKey, ref map<int, bool>> squadsWithPlayers = new map<FactionKey, ref map<int, bool>>();
+			foreach (int pid : playerIds)
+			{
+				RplId sid;
+				if (playableManager.FindPlayerSlotById(pid, sid) && sid != RplId.Invalid())
 				{
-					RplId playableId = playableManager.GetPlayableByPlayer(playerId);
-					if (playableId == RplId.Invalid())
+					FactionKey fk = playableManager.GetPlayerFactionKey(pid);
+					if (fk == "") continue;
+					factionsWithPlayers[fk] = true;
+					int groupId = playableManager.GetSlotGroupId(sid);
+					if (!squadsWithPlayers.Contains(fk))
+						squadsWithPlayers[fk] = new map<int, bool>();
+					squadsWithPlayers[fk][groupId] = true;
+				}
+			}
+
+			foreach (FactionKey fk, bool _ : factionsWithPlayers)
+			{
+				VoNChannelsManager.GetOrCreateRoomWithFaction(fk, "#PS-VoNRoom_Faction");
+				VoNChannelsManager.GetOrCreateRoomWithFaction(fk, "#PS-VoNRoom_Command");
+			}
+
+			foreach (FactionKey fk, map<int, bool> groups : squadsWithPlayers)
+			{
+				foreach (int groupId, bool __ : groups)
+				{
+					int groupCallSign = -1;
+					foreach (RplId sId : playableManager.GetSortedSlotIds())
 					{
-						playableManager.SetPlayerFactionKey(playerId, "");
-						VoNRoomsManager.MoveToRoom(playerId, "", "#PS-VoNRoom_Global");
-					}else{
-						if (playableManager.IsPlayerGroupLeader(playerId) || m_bPublicCommandBriefing)
+						if (playableManager.GetSlotGroupId(sId) == groupId)
 						{
-							VoNRoomsManager.MoveToRoom(playerId, playableManager.GetPlayerFactionKey(playerId), "#PS-VoNRoom_Command");
-						} else {
-							string groupName = playableManager.GetGroupCallsignByPlayable(playableId).ToString();
-							VoNRoomsManager.MoveToRoom(playerId, playableManager.GetPlayerFactionKey(playerId), groupName);
+							groupCallSign = playableManager.GetGroupCallsignByPlayable(sId);
+							break;
 						}
 					}
+					if (groupCallSign >= 0)
+						VoNChannelsManager.GetOrCreateRoomWithFaction(fk, groupCallSign.ToString());
 				}
-				if (m_bHolsterWeapon)
-					playableManager.HolsterWeapons();
+			}
+		}
+		foreach (int playerId : playerIds)
+		{
+			RplId slotId;
+			if (!playableManager.FindPlayerSlotById(playerId, slotId) || slotId == RplId.Invalid())
+			{
+				if (VoNChannelsManager)
+					VoNChannelsManager.MoveToRoom(playerId, "", "#PS-VoNRoom_Global");
+			}
+			else
+			{
+				if (playableManager.IsPlayerTopSlotInGroup(playerId))
+				{
+					if (VoNChannelsManager)
+						VoNChannelsManager.MoveToRoom(playerId, playableManager.GetPlayerFactionKey(playerId), "#PS-VoNRoom_Command");
+				}
+				else if (m_bPublicCommandBriefing)
+				{
+					if (VoNChannelsManager)
+						VoNChannelsManager.MoveToRoom(playerId, playableManager.GetPlayerFactionKey(playerId), "#PS-VoNRoom_Command");
+				}
+				else
+				{
+					int groupCallsign = playableManager.GetGroupCallsignByPlayable(slotId);
+					if (VoNChannelsManager)
+						VoNChannelsManager.MoveToRoom(playerId, playableManager.GetPlayerFactionKey(playerId), groupCallsign.ToString());
+				}
+			}
+		}
+		if (m_bHolsterWeapon)
+			playableManager.HolsterWeapons();
+		break;
+			case SCR_EGameModeState.GAME:
+				GetGame().GetCallqueue().CallLater(DumpPlayableEntityState, 10000, false);
 				break;
 		}
+	}
+
+	void DumpPlayableEntityState()
+	{
+		if (!Replication.IsServer())
+			return;
+		PS_PlayableManager pm = PS_PlayableManager.GetInstance();
+		if (!pm)
+			return;
+		Print("=== PLAYABLE ENTITY STATE DUMP (10s after GAME) ===", LogLevel.NORMAL);
+		array<int> playerIds = {};
+		GetGame().GetPlayerManager().GetPlayers(playerIds);
+		foreach (int pid : playerIds)
+		{
+			RplId slotId = pm.GetPlayableByPlayer(pid);
+			IEntity entity = IEntity.Cast(Replication.FindItem(slotId));
+			string entityState = "NULL";
+			if (entity) entityState = "ALIVE";
+			PS_SlotCharacterData slotData;
+			bool inMap = pm.FindSlotData(slotId, slotData);
+			Print(string.Format("Player=%1 Slot=%2 Entity=%3 InMap=%4 Name=%5", pid, slotId, entityState, inMap, pm.GetSlotName(slotId)), LogLevel.NORMAL);
+		}
+		Print("=== END DUMP ===", LogLevel.NORMAL);
 	}
 
 	// Switch to next game state
@@ -918,12 +988,53 @@ class PS_GameModeCoop : SCR_BaseGameMode
 
 	void StartGame()
 	{
+		PS_DebugLogger.LogImportant("StartGame BEGIN");
 		m_iReconnectTime = m_iReconnectTimeAfterBriefing;
 		if (m_bReserveSlots)
 			ReserveSlots();
-		PS_PlayableManager.GetInstance().RemoveRedundantUnits();
+		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
+		
+		// Deploy all players to their slots FIRST, before any entity cleanup
+		{
+			array<int> allPlayers = {};
+			GetGame().GetPlayerManager().GetPlayers(allPlayers);
+			foreach (int pid : allPlayers)
+			{
+				PS_DebugLogger.LogImportant("StartGame deploying player=" + pid.ToString(), pid);
+				playableManager.ApplyPlayable(pid);
+			}
+		}
+		
+		playableManager.RemoveRedundantUnits();
 		restrictedZonesTimer(m_iFreezeTime);
 		StartGameMode();
+		PS_DebugLogger.LogImportant("StartGame AFTER StartGameMode, sending deploy RPC");
+		
+		Rpc(RPC_RequestDeployForAllPlayers);
+		PS_DebugLogger.LogImportant("StartGame END");
+	}
+	
+	[RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]
+	void RPC_RequestDeployForAllPlayers()
+	{
+		PlayerController pc = GetGame().GetPlayerController();
+		if (!pc) return;
+		int playerId = pc.GetPlayerId();
+		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
+		RplId slotId = playableManager.GetPlayableByPlayer(playerId);
+		PS_DebugLogger.LogImportant("RPC_RequestDeploy playerId=" + playerId.ToString() + " slotId=" + slotId.ToString());
+		if (slotId == RplId.Invalid())
+		{
+			PS_DebugLogger.LogImportant("RPC_RequestDeploy SKIP: no slot, switching to observer");
+			PS_PlayableControllerComponent pccNoSlot = PS_PlayableControllerComponent.Cast(pc.FindComponent(PS_PlayableControllerComponent));
+			if (pccNoSlot)
+				pccNoSlot.SwitchToObserver(null);
+			return;
+		}
+		PS_PlayableControllerComponent pcc = PS_PlayableControllerComponent.Cast(pc.FindComponent(PS_PlayableControllerComponent));
+		if (!pcc)
+			return;
+		pcc.RequestDeployFromClient();
 	}
 
 	void ReserveSlots()
@@ -935,14 +1046,13 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 
 		array<string> GUIDs = {};
-		map<RplId, ref PS_PlayableContainer> playables = playableManager.GetPlayables();
-		foreach (RplId id, PS_PlayableContainer playable : playables)
+		foreach (RplId slotId, PS_SlotCharacterData slot : playableManager.GetSlots().GetRawMap())
 		{
-			int playerId = playableManager.GetPlayerByPlayable(id);
+			int playerId = slot.m_PlayerId;
 			if (playerId <= 0)
 				continue;
 
-			string GUID = GetGame().GetBackendApi().GetPlayerIdentityId(playerId);
+			string GUID = playableManager.GetPlayerGUIDById(playerId);
 			GUIDs.Insert(GUID);
 		}
 
@@ -959,9 +1069,8 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		freezeTime -= time;
 
 		m_fCurrentFreezeTime = freezeTime;
-		Replication.BumpMe();
 
-		// Show timer on clients synced to server
+		// Show timer on clients synced to server (RPC handles UI; BumpMe only needed on final tick for late-joiners)
 		if (RplSession.Mode() != RplMode.Dedicated) RPC_restrictedZonesTimer(freezeTime);
 		Rpc(RPC_restrictedZonesTimer, freezeTime);
 
@@ -1071,7 +1180,8 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	}
 	void SetMarkersOnlyOnBriefing(bool markersOnlyOnBriefing)
 	{
-		RPC_SetMarkersOnlyOnBriefing(markersOnlyOnBriefing);
+		m_bMarkersOnlyOnBriefing = markersOnlyOnBriefing;
+		Replication.BumpMe();
 		Rpc(RPC_SetMarkersOnlyOnBriefing, markersOnlyOnBriefing);
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]
@@ -1157,6 +1267,10 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	{
 		return m_bRemoveRedundantUnits;
 	}
+	int GetReadyCountdown()
+	{
+		return m_iReadyCountdown;
+	}
 	void SetRemoveRedundantUnits(bool killRedundantUnits)
 	{
 		RPC_SetRemoveRedundantUnits(killRedundantUnits);
@@ -1181,25 +1295,6 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	void RPC_SetCanOpenLobbyInGame(bool canOpenLobbyInGame)
 	{
 		m_bTeamSwitch = canOpenLobbyInGame;
-	}
-
-	// ------------------------------------------ JIP Replication ------------------------------------------
-	override bool RplSave(ScriptBitWriter writer)
-	{
-		writer.WriteBool(m_bFactionLock);
-		writer.WriteInt(m_iFreezeTime);
-		writer.WriteInt(m_iReconnectTime);
-
-		return true;
-	}
-
-	override bool RplLoad(ScriptBitReader reader)
-	{
-		reader.ReadBool(m_bFactionLock);
-		reader.ReadInt(m_iFreezeTime);
-		reader.ReadInt(m_iReconnectTime);
-
-		return true;
 	}
 }
 

@@ -83,6 +83,45 @@ modded class SCR_BaseGameMode
 
 		OnGameStateChanged();
 	}
+
+	static void DisconnectPlayerBase(SCR_BaseGameMode gameMode, int playerId, KickCauseCode cause, int timeout, IEntity controlledEntity)
+	{
+		gameMode.m_OnPlayerDisconnected.Invoke(playerId, cause, timeout);
+		foreach (SCR_BaseGameModeComponent comp : gameMode.m_aAdditionalGamemodeComponents)
+		{
+			comp.OnPlayerDisconnected(playerId, cause, timeout);
+		}
+		gameMode.m_OnPostCompPlayerDisconnected.Invoke(playerId, cause, timeout);
+
+		if (gameMode.IsMaster() && gameMode.m_pRespawnSystemComponent)
+			gameMode.m_pRespawnSystemComponent.OnPlayerDisconnected_S(playerId, cause, timeout);
+
+		if (gameMode.IsMaster() && controlledEntity)
+		{
+			SCR_ReconnectComponent reconnectComp = SCR_ReconnectComponent.GetInstance();
+			if (reconnectComp && reconnectComp.HandlePlayerDisconnect(playerId, cause))
+			{
+				CharacterControllerComponent charController = CharacterControllerComponent.Cast(controlledEntity.FindComponent(CharacterControllerComponent));
+				if (charController)
+					charController.SetMovement(0, vector.Forward);
+
+				CompartmentAccessComponent compAccess = CompartmentAccessComponent.Cast(controlledEntity.FindComponent(CompartmentAccessComponent));
+				if (compAccess)
+				{
+					BaseCompartmentSlot compartment = compAccess.GetCompartment();
+					if (compartment)
+					{
+						CarControllerComponent carController = CarControllerComponent.Cast(compartment.GetVehicle().FindComponent(CarControllerComponent));
+						if (carController)
+						{
+							carController.Shutdown();
+							carController.StopEngine(false);
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
 

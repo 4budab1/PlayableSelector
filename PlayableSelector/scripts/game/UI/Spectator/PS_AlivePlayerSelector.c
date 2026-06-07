@@ -93,6 +93,7 @@ class PS_AlivePlayerSelector : SCR_ButtonBaseComponent
 	// Updates
 	void UpdateDammage(EDamageState state)
 	{
+		PS_DebugLogger.LogImportant("Spectator UpdateDammage playableId=" + m_iPlayableId.ToString() + " state=" + state.ToString() + " isDead=" + (state == EDamageState.DESTROYED).ToString());
 		m_bDead = state == EDamageState.DESTROYED;
 		if (m_bDead)
 		{
@@ -100,7 +101,6 @@ class PS_AlivePlayerSelector : SCR_ButtonBaseComponent
 			m_AlivePlayerList.OnAliveDie(m_PlayableContainer);
 			m_wUnitIcon.SetVisible(false);
 			m_wDeadIcon.SetVisible(true);
-			//m_wUnitIcon.LoadImageFromSet(0, m_sImageSet, "death");
 			m_wDeadIcon.SetColor(m_DeathColor);
 			m_wPlayerName.SetColor(m_DeathColor);
 		}
@@ -109,6 +109,10 @@ class PS_AlivePlayerSelector : SCR_ButtonBaseComponent
 			m_PlayableContainer.SetIconTo(m_wUnitIcon);
 			m_wPlayerName.SetColor(Color.White);
 		}
+
+		int playerId = m_PlayableManager.GetPlayerByPlayableRemembered(m_PlayableContainer.GetRplId());
+		if (playerId == m_PlayerController.GetPlayerId())
+			m_wPlayerName.SetColor(Color.FromInt(0xFF666666));
 	}
 	
 	void UpdatePlayerWrap(int oldPlayerId, int playerId)
@@ -180,7 +184,7 @@ class PS_AlivePlayerSelector : SCR_ButtonBaseComponent
 			contextMenu.ActionDetachFrom(character).Insert(OnActionDetachFrom);
 		contextMenu.ActionLookAt(character).Insert(OnActionLookAt);
 		contextMenu.ActionFirstPersonView(character).Insert(OnActionFirstPersonView);
-		contextMenu.ActionRespawnInPlace(playableComponent.GetId(), playerId);
+		contextMenu.ActionRespawnInPlace(playableComponent.GetRplId(), playerId);
 		if (playerId > 0)
 		{
 			contextMenu.ActionDirectMessage(playerId);
@@ -242,7 +246,8 @@ class PS_AlivePlayerSelector : SCR_ButtonBaseComponent
 	// -------------------- Buttons events --------------------
 	void AlivePlayerButtonClicked(SCR_ButtonBaseComponent playerButton)
 	{
-		m_mSpectatorMenu.SetCameraCharacter(m_PlayableContainer.GetRplId());
+		bool ok = m_mSpectatorMenu.SetCameraCharacter(m_PlayableContainer.GetRplId());
+		PS_DebugLogger.LogImportant("Spectator AlivePlayerClicked playableId=" + m_iPlayableId.ToString() + " ok=" + ok.ToString());
 	}
 	
 }

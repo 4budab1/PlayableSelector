@@ -24,6 +24,7 @@ class PS_AlivePlayerList : ScriptedWidgetComponent
 	
 	// Parameters
 	protected PS_SpectatorMenu m_mSpectatorMenu;
+	protected bool m_bShowDead = false;
 	
 	// Vars
 	protected ref map<SCR_AIGroup, PS_AlivePlayerGroup> m_aAlivePlayerGroups = new map<SCR_AIGroup, PS_AlivePlayerGroup>();
@@ -126,6 +127,7 @@ class PS_AlivePlayerList : ScriptedWidgetComponent
 	{
 		m_mSpectatorMenu = spectatorMenu;
 		
+		PS_DebugLogger.LogImportant("Spectator AlivePlayerList InitList START playablesCount=" + m_PlayableManager.GetPlayablesSorted().Count().ToString());
 		InitList();
 	}
 	
@@ -179,7 +181,14 @@ class PS_AlivePlayerList : ScriptedWidgetComponent
 	// ETC
 	bool IsShowDead()
 	{
-		return m_hShowDeathButton.IsToggled();
+		return m_bShowDead;
+	}
+	
+	void ShowDeadButtonClicked(SCR_ButtonBaseComponent deadButton)
+	{
+		m_bShowDead = !m_bShowDead;
+		PS_DebugLogger.LogImportant("Spectator ShowDeadButton toggled=" + m_bShowDead.ToString());
+		m_OnShowDead.Invoke(m_bShowDead);
 	}
 	
 	// -------------------- Buttons events --------------------
@@ -201,10 +210,5 @@ class PS_AlivePlayerList : ScriptedWidgetComponent
 			bool factionSelected = m_aSelectedFactions.Contains(goupFaction);
 			alivePlayerGroup.GetRootWidget().SetVisible(factionSelected);
 		}
-	}
-	
-	void ShowDeadButtonClicked(SCR_ButtonBaseComponent deadButton)
-	{
-		m_OnShowDead.Invoke(m_hShowDeathButton.IsToggled());
 	}
 }
