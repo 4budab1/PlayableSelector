@@ -87,12 +87,9 @@ modded class SCR_BaseGameMode
 	static void DisconnectPlayerBase(SCR_BaseGameMode gameMode, int playerId, KickCauseCode cause, int timeout, IEntity controlledEntity)
 	{
 		gameMode.m_OnPlayerDisconnected.Invoke(playerId, cause, timeout);
-		if (gameMode.m_aAdditionalGamemodeComponents)
+		foreach (SCR_BaseGameModeComponent comp : gameMode.m_aAdditionalGamemodeComponents)
 		{
-			foreach (SCR_BaseGameModeComponent comp : gameMode.m_aAdditionalGamemodeComponents)
-			{
-				comp.OnPlayerDisconnected(playerId, cause, timeout);
-			}
+			comp.OnPlayerDisconnected(playerId, cause, timeout);
 		}
 		gameMode.m_OnPostCompPlayerDisconnected.Invoke(playerId, cause, timeout);
 

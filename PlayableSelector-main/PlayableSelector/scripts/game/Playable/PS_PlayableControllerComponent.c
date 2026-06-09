@@ -733,14 +733,6 @@ class PS_PlayableControllerComponent : ScriptComponent
 		UpdatePosition(false);
 	}
 	
-	protected CameraManager m_CachedCameraManager;
-
-	void CacheCameraManager()
-	{
-		if (!m_CachedCameraManager)
-			m_CachedCameraManager = GetGame().GetCameraManager();
-	}
-
 	void UpdatePosition(bool force)
 	{
 		RplComponent rpl = RplComponent.Cast(GetOwner().FindComponent(RplComponent));
@@ -765,30 +757,18 @@ class PS_PlayableControllerComponent : ScriptComponent
 				gameEntity.Teleport(mat);
 			gameEntity.SetTransform(mat);
 			
-			// Cache camera manager to avoid repeated expensive lookups
-			CacheCameraManager();
-			bool isMenu = false;
 			MenuBase menu = GetGame().GetMenuManager().GetTopMenu();
 			if (menu && (menu.IsInherited(PS_PreviewMapMenu) || menu.IsInherited(PS_CoopLobby) || menu.IsInherited(PS_BriefingMapMenu)))
 			{
-				isMenu = true;
-				if (m_CachedCameraManager)
-				{
-					CameraBase cam = m_CachedCameraManager.CurrentCamera();
-					if (cam)
-						cam.SetWorldTransform(mat);
-				}
+				GetGame().GetCameraManager().CurrentCamera().SetWorldTransform(mat);
 				if (m_Camera)
 					m_Camera.SetTransform(mat);	
 			}
 
 			// Who broke camera on map?
-			if (m_CachedCameraManager && !isMenu)
-			{
-				CameraBase cameraBase = m_CachedCameraManager.CurrentCamera();
-				if (cameraBase)
-					cameraBase.ApplyTransform(GetGame().GetWorld().GetTimeSlice());
-			}
+			CameraBase cameraBase = GetGame().GetCameraManager().CurrentCamera();
+			if (cameraBase)
+				cameraBase.ApplyTransform(GetGame().GetWorld().GetTimeSlice());
  
 
 			Physics physics = m_InitialEntity.GetPhysics();

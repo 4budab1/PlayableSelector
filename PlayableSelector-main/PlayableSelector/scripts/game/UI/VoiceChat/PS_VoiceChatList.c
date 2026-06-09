@@ -29,32 +29,29 @@ class PS_VoiceChatList : SCR_ScriptedWidgetComponent
 	// -------------------- Handler events --------------------
 	override void HandlerAttached(Widget w)
 	{
-	if (!GetGame().InPlayMode())
-		return;
-
-	m_gPlayerManager = GetGame().GetPlayerManager();
-	m_gPlayableManager = PS_PlayableManager.GetInstance();
-	m_gVoNChannelsManager = PS_VoNChannelsManager.GetInstance();
-	m_pPlayerController = GetGame().GetPlayerController();
-
-	if (!m_gVoNChannelsManager || !m_pPlayerController || !m_gPlayableManager)
-	{
-		GetGame().GetCallqueue().CallLater(HandlerAttached, 100, false, w);
-		return;
-	}
-
-	super.HandlerAttached(w);
-
+		if (!GetGame().InPlayMode())
+			return;
+		
+		super.HandlerAttached(w);
+		
+		// global
+		m_gPlayerManager   = GetGame().GetPlayerManager();
+		m_gPlayableManager = PS_PlayableManager.GetInstance();
+		m_gVoNChannelsManager = PS_VoNChannelsManager.GetInstance();
+		
+		// local
 		m_wRoomsList = VerticalLayoutWidget.Cast(w.FindAnyWidget("RoomsList"));
-
+		
 		m_gVoNChannelsManager.m_eOnRoomChanged.Insert(MovePlayer);
-
+		
+		m_pPlayerController = GetGame().GetPlayerController();
 		m_iPlayerId = m_pPlayerController.GetPlayerId();
 		m_sCurrentFactionKey = m_gPlayableManager.GetPlayerFactionKey(m_iPlayerId);
 		m_iPublicRoomId = m_gVoNChannelsManager.GetRoomWithFaction("", "#PS-VoNRoom_Public" + m_iPlayerId.ToString());
-
-		Rebuild();
-
+		
+		if (m_gVoNChannelsManager)
+			Rebuild();
+		
 		GetGame().GetCallqueue().CallLater(UpdateInfo, 100, true);
 	}
 	
@@ -227,22 +224,12 @@ class PS_VoiceChatList : SCR_ScriptedWidgetComponent
 	void GetVisibleRooms(out array<int> outRoomsArray)
 	{
 		PS_GameModeCoop gameMode = PS_GameModeCoop.Cast(GetGame().GetGameMode());
-		if (!gameMode)
-			return;
 		PlayerManager playerManager = GetGame().GetPlayerManager();
-		if (!playerManager)
-			return;
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
-		if (!playableManager)
-			return;
 		PS_VoNChannelsManager VoNChannelsManager = PS_VoNChannelsManager.GetInstance();
-		if (!VoNChannelsManager)
-			return;
 		SCR_EGameModeState gameState = gameMode.GetState();
 
 		PlayerController currentPlayerController = GetGame().GetPlayerController();
-		if (!currentPlayerController)
-			return;
 		int currentPlayerId = currentPlayerController.GetPlayerId();
 
 		RplId playerSlot = playableManager.GetPlayableByPlayer(currentPlayerId);
@@ -302,15 +289,8 @@ class PS_VoiceChatList : SCR_ScriptedWidgetComponent
 			int globalRoom = VoNChannelsManager.GetOrCreateRoomWithFaction("", "#PS-VoNRoom_Global");
 			outRoomsArray.Insert(globalRoom);
 
-			// Show all players public rooms in preview so everyone can see and join them
-			array<int> playerIds = {};
-			GetGame().GetPlayerManager().GetPlayers(playerIds);
-			foreach (int pid : playerIds)
-			{
-				int publicRoom = VoNChannelsManager.GetRoomWithFaction("", "#PS-VoNRoom_Public" + pid.ToString());
-				if (publicRoom >= 0 && !outRoomsArray.Contains(publicRoom))
-					outRoomsArray.Insert(publicRoom);
-			}
+			int publicRoom = VoNChannelsManager.GetRoomWithFaction("", "#PS-VoNRoom_Public" + currentPlayerId.ToString());
+			if (publicRoom >= 0) outRoomsArray.Insert(publicRoom);
 		}
 		else if (gameState == SCR_EGameModeState.BRIEFING)
 		{

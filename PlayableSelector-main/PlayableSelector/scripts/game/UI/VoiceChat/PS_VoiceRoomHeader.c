@@ -78,7 +78,8 @@ class PS_VoiceRoomHeader : SCR_ButtonBaseComponent
 			m_wJoinRoomImage.SetVisible(false);
 			return;
 		}
-		m_wJoinRoomImage.SetVisible(true);
+		//m_wJoinRoomImage.SetVisible(true);
+		
 		m_wJoinRoomImage.LoadImageFromSet(0, m_sImageSetPS, "RoomEnter");
 	}
 
