@@ -575,6 +575,9 @@ class PS_PlayableControllerComponent : ScriptComponent
       PS_DebugLogger.LogImportant("OnControlledEntityChanged entity has NO VoN — game state=" + typename.EnumToString(SCR_EGameModeState, gameModeCoop.GetState()), playerId);
       if (gameModeCoop.GetState() == SCR_EGameModeState.GAME)
       {
+        // Apply VoN encryption keys to the new character's radios (playable character has no PS_LobbyVoNComponent)
+        ApplyCurrentVoNKeys();
+
         GetGame().GetCallqueue().Call(ForceNotifyEditorPlayerSpawned, thisPlayerController.GetPlayerId(), to);
         if (!from)
         {
@@ -977,13 +980,13 @@ class PS_PlayableControllerComponent : ScriptComponent
 	// Separate radio VoNs, CALL IT FROM SERVER
 	void SetVoNKey(string VoNKey, string VoNKeyLocal)
 	{
-		if (!GetVoN())
-			return;
 		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
 		IEntity entity = thisPlayerController.GetControlledEntity();
 		if (!entity)
 			return;
 		SCR_GadgetManagerComponent gadgetManager = SCR_GadgetManagerComponent.Cast(entity.FindComponent(SCR_GadgetManagerComponent));
+		if (!gadgetManager)
+			return;
 		array<SCR_GadgetComponent> radios = gadgetManager.GetGadgetsByType(EGadgetType.RADIO);
 		if (radios.Count() > 0)
 		{
@@ -996,6 +999,53 @@ class PS_PlayableControllerComponent : ScriptComponent
 			BaseRadioComponent radioLocal = BaseRadioComponent.Cast(radios[1].GetOwner().FindComponent(BaseRadioComponent));
 			if (radioLocal)
 				radioLocal.SetEncryptionKey(VoNKeyLocal);
+		}
+	}
+
+	// Apply VoN encryption keys from the current PS_VoNChannelsManager room
+	void ApplyCurrentVoNKeys()
+	{
+		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
+		IEntity entity = thisPlayerController.GetControlledEntity();
+		if (!entity)
+			return;
+
+		PS_VoNChannelsManager vonManager = PS_VoNChannelsManager.GetInstance();
+		if (!vonManager)
+			return;
+
+		int playerId = thisPlayerController.GetPlayerId();
+		string channelKey = vonManager.GetPlayerChannelKey(playerId);
+		if (channelKey == "")
+			return;
+
+		string factionKey = "";
+		string roomName = channelKey;
+		if (channelKey.Contains("|"))
+		{
+			array<string> tokens = {};
+			channelKey.Split("|", tokens, false);
+			factionKey = tokens[0];
+			roomName = tokens[1];
+		}
+
+		string encryptionKey = "Menu" + factionKey + roomName;
+
+		SCR_GadgetManagerComponent gadgetManager = SCR_GadgetManagerComponent.Cast(entity.FindComponent(SCR_GadgetManagerComponent));
+		if (!gadgetManager)
+			return;
+		array<SCR_GadgetComponent> radios = gadgetManager.GetGadgetsByType(EGadgetType.RADIO);
+		if (radios.Count() > 0)
+		{
+			BaseRadioComponent radio = BaseRadioComponent.Cast(radios[0].GetOwner().FindComponent(BaseRadioComponent));
+			if (radio)
+				radio.SetEncryptionKey(encryptionKey);
+		}
+		if (radios.Count() > 1)
+		{
+			BaseRadioComponent radioLocal = BaseRadioComponent.Cast(radios[1].GetOwner().FindComponent(BaseRadioComponent));
+			if (radioLocal)
+				radioLocal.SetEncryptionKey(channelKey);
 		}
 	}
 	bool isVonInit()
@@ -1031,15 +1081,17 @@ class PS_PlayableControllerComponent : ScriptComponent
   }
 
 	// ------------------ Observer camera controlls ------------------
-  void SwitchToObserverServer()
+  void SwitchToObserverServer(vector observerPosition = Vector(0, 0, 0))
   {
     PS_DebugLogger.LogImportant("SwitchToObserverServer");
-    Rpc(RPC_SwitchToObserverServer);
+    Rpc(RPC_SwitchToObserverServer, observerPosition);
   }
   [RplRpc(RplChannel.Reliable, RplRcver.Owner)]
-  void RPC_SwitchToObserverServer()
+  void RPC_SwitchToObserverServer(vector observerPosition)
   {
     PS_DebugLogger.LogImportant("RPC_SwitchToObserverServer OWNER");
+    if (observerPosition != "0 0 0")
+      m_vObserverPosition = observerPosition;
     SwitchToObserver(null);
   }
 
@@ -1067,13 +1119,12 @@ class PS_PlayableControllerComponent : ScriptComponent
 		Resource resource = Resource.Load("{6EAA30EF620F4A2E}Prefabs/Editor/Camera/ManualCameraSpectator.et");
 		m_Camera = GetGame().SpawnEntityPrefab(resource, GetGame().GetWorld(), params);
 
-		if (lastCameraTransform[3][1] < 10000 && lastCameraTransform[3][1] > 0)
-		{
-			m_Camera.SetTransform(lastCameraTransform);
-			lastCameraTransform[3][1] = 10000;
-		} else if (m_vObserverPosition != "0 0 0") {
+		if (m_vObserverPosition != "0 0 0") {
 			m_Camera.SetOrigin(m_vObserverPosition);
 			m_vObserverPosition = "0 0 0";
+		} else if (lastCameraTransform[3][1] < 10000 && lastCameraTransform[3][1] > 0) {
+			m_Camera.SetTransform(lastCameraTransform);
+			lastCameraTransform[3][1] = 10000;
 		} else {
 			SCR_MapEntity mapEntity = SCR_MapEntity.GetMapInstance();
 			m_Camera.SetOrigin(mapEntity.Size() / 2.0 + vector.Up * 100);

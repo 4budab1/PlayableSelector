@@ -127,7 +127,7 @@ class PS_GameModeCoop : SCR_BaseGameMode
 			return;
 		}
 		World world = GetGame().GetWorld();
-		SCR_GarbageSystem garbageSystem = world.FindSystem(SCR_GarbageSystem);
+		SCR_GarbageSystem garbageSystem = SCR_GarbageSystem.Cast(world.FindSystem(SCR_GarbageSystem));
 		if (garbageSystem)
 			garbageSystem.Enable(!m_bDisableGarbageSystem);
 	}
@@ -195,7 +195,7 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	{
 		if (!m_CachedVideoSettings)
 		{
-			BaseContainer videoSettings = GetGame().GetEngineUserSettings();
+			UserSettings videoSettings = GetGame().GetEngineUserSettings();
 			if (!videoSettings)
 				return;
 			m_CachedVideoSettings = videoSettings.GetModule("VideoUserSettings");
@@ -1059,6 +1059,10 @@ class PS_GameModeCoop : SCR_BaseGameMode
 			playableManager.HolsterWeapons();
 		break;
 			case SCR_EGameModeState.GAME:
+				// VoN rooms are already set up from BRIEFING — players stay in their squad/command channels
+				// No cleanup needed here (matching ReforgerLobby17 approach)
+				if (Replication.IsServer())
+					OpenCurrentMenuOnClients();
 				GetGame().GetCallqueue().Remove(DumpPlayableEntityState);
 				GetGame().GetCallqueue().CallLater(DumpPlayableEntityState, 10000, false);
 				break;

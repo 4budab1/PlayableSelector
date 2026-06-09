@@ -579,6 +579,12 @@ class PS_PlayableManager : ScriptComponent
 			if (vonManager)
 				vonManager.SetPlayerToChannel(playerId, "");
 
+			// Capture death position from current controlled entity before we change it
+			IEntity currentControlledEntity = playerController.GetControlledEntity();
+			vector deathPos = "0 0 0";
+			if (currentControlledEntity)
+				deathPos = currentControlledEntity.GetOrigin();
+
 			entity = playableController.GetInitialEntity();
 			if (!entity)
 			{
@@ -588,7 +594,7 @@ class PS_PlayableManager : ScriptComponent
 				playableController.SetInitialEntity(entity);
 			}
 			playerController.SetInitialMainEntity(entity);
-			playableController.SwitchToObserverServer();
+			playableController.SwitchToObserverServer(deathPos);
 			return;
 		}
 
@@ -924,7 +930,7 @@ class PS_PlayableManager : ScriptComponent
 					bool callsignGreater = otherCallsign > callsign;
 					bool rankGreater = slot.m_eCharacterRank > otherSlot.m_eCharacterRank;
 					bool rankEquival = slot.m_eCharacterRank == otherSlot.m_eCharacterRank;
-					bool rplIdGreater = slotId > otherSlotId;
+					bool rplIdGreater = otherSlotId > slotId;
 
 					if ((((rplIdGreater && rankEquival) || rankGreater) && callsignEquival) || callsignGreater)
 					{

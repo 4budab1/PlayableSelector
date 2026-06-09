@@ -302,14 +302,18 @@ class PS_VoiceChatList : SCR_ScriptedWidgetComponent
 			int globalRoom = VoNChannelsManager.GetOrCreateRoomWithFaction("", "#PS-VoNRoom_Global");
 			outRoomsArray.Insert(globalRoom);
 
-			// Show all players public rooms in preview so everyone can see and join them
-			array<int> playerIds = {};
-			GetGame().GetPlayerManager().GetPlayers(playerIds);
-			foreach (int pid : playerIds)
+			// Show own public room always visible to self
+			int myPublicRoom = VoNChannelsManager.GetRoomWithFaction("", "#PS-VoNRoom_Public" + currentPlayerId.ToString());
+			if (myPublicRoom >= 0 && !outRoomsArray.Contains(myPublicRoom))
+				outRoomsArray.Insert(myPublicRoom);
+
+			// Show other players' public rooms only if they have switched into them
+			array<int> playersPublicRooms = {};
+			VoNChannelsManager.GetPlayersPublicRooms(playersPublicRooms);
+			foreach (int roomId : playersPublicRooms)
 			{
-				int publicRoom = VoNChannelsManager.GetRoomWithFaction("", "#PS-VoNRoom_Public" + pid.ToString());
-				if (publicRoom >= 0 && !outRoomsArray.Contains(publicRoom))
-					outRoomsArray.Insert(publicRoom);
+				if (!outRoomsArray.Contains(roomId))
+					outRoomsArray.Insert(roomId);
 			}
 		}
 		else if (gameState == SCR_EGameModeState.BRIEFING)
