@@ -121,14 +121,16 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	
 	override void EOnInit(IEntity owner)
 	{
-        super.EOnInit(owner);
-        
-        if (!GetGame().InPlayMode() || !Replication.IsServer()){
-            return;
-        }
-        World world = GetGame().GetWorld();
-        world.FindSystem(SCR_GarbageSystem).Enable(!m_bDisableGarbageSystem);
-    }
+		super.EOnInit(owner);
+
+		if (!GetGame().InPlayMode() || !Replication.IsServer()){
+			return;
+		}
+		World world = GetGame().GetWorld();
+		SCR_GarbageSystem garbageSystem = world.FindSystem(SCR_GarbageSystem);
+		if (garbageSystem)
+			garbageSystem.Enable(!m_bDisableGarbageSystem);
+	}
 	
   override void OnGameStart()
   {
@@ -187,13 +189,24 @@ class PS_GameModeCoop : SCR_BaseGameMode
 			GetGame().GetCallqueue().CallLater(ForceFramerate, 1000, true);
 		}
 	}
+	protected BaseContainer m_CachedVideoSettings;
+
 	void ForceFramerate()
 	{
-		BaseContainer video = GetGame().GetEngineUserSettings().GetModule("VideoUserSettings");
+		if (!m_CachedVideoSettings)
+		{
+			BaseContainer videoSettings = GetGame().GetEngineUserSettings();
+			if (!videoSettings)
+				return;
+			m_CachedVideoSettings = videoSettings.GetModule("VideoUserSettings");
+		}
+		if (!m_CachedVideoSettings)
+			return;
+
 		PS_GameModeCoop gm = PS_GameModeCoop.Cast(GetGame().GetGameMode());
 		if (gm && gm.GetState() == SCR_EGameModeState.GAME)
 		{
-			video.Set("MaxFps", m_iOldMenuFramerate);
+			m_CachedVideoSettings.Set("MaxFps", m_iOldMenuFramerate);
 			GetGame().UserSettingsChanged();
 
 			GetGame().GetCallqueue().Remove(ForceFramerate);
@@ -201,10 +214,10 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		else
 		{
 			int currentFramerate;
-			video.Get("MaxFps", currentFramerate);
+			m_CachedVideoSettings.Get("MaxFps", currentFramerate);
 			if (currentFramerate != m_iForceMenuFramerate)
 			{
-				video.Set("MaxFps", m_iForceMenuFramerate);
+				m_CachedVideoSettings.Set("MaxFps", m_iForceMenuFramerate);
 				GetGame().UserSettingsChanged();
 			}
 		}
@@ -243,7 +256,11 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	void EditorClosed()
 	{
 		PlayerController playerController = GetGame().GetPlayerController();
+		if (!playerController)
+			return;
 		PS_PlayableControllerComponent playableController = PS_PlayableControllerComponent.Cast(playerController.FindComponent(PS_PlayableControllerComponent));
+		if (!playableController)
+			return;
 
 		playableController.SaveCameraTransform();
 		playableController.SwitchFromObserver();
@@ -266,6 +283,8 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	void AddAdvanceAction()
 	{
 		SCR_ChatPanelManager chatPanelManager = SCR_ChatPanelManager.GetInstance();
+		if (!chatPanelManager)
+			return;
 		ChatCommandInvoker invoker = chatPanelManager.GetCommandInvoker("adv");
 		invoker.Insert(AdvanceStage_Callback);
 		invoker = chatPanelManager.GetCommandInvoker("lom");
@@ -519,6 +538,8 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	{
 		BaseGameMode gamemode = GetGame().GetGameMode();
 		SCR_PlayersRestrictionZoneManagerComponent restrictionZoneManager = SCR_PlayersRestrictionZoneManagerComponent.Cast(gamemode.FindComponent(SCR_PlayersRestrictionZoneManagerComponent));
+		if (!restrictionZoneManager)
+			return;
 		set<SCR_EditorRestrictionZoneEntity> zones = restrictionZoneManager.GetZones();
 
 		SCR_ChatPanelManager chatPanelManager = SCR_ChatPanelManager.GetInstance();
@@ -612,54 +633,69 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		return super.HandlePlayerKilled(playerId, playerEntity, killerEntity, killer);
 	}
 
-  protected override void OnPlayerDisconnected(int playerId, KickCauseCode cause, int timeout)
-  {
-    PlayerManager playerManager = GetGame().GetPlayerManager();
-    SCR_PlayerController playerController = SCR_PlayerController.Cast(playerManager.GetPlayerController(playerId));
+	protected override void OnPlayerDisconnected(int playerId, KickCauseCode cause, int timeout)
+	{
+		PlayerManager playerManager = GetGame().GetPlayerManager();
+		SCR_PlayerController playerController = SCR_PlayerController.Cast(playerManager.GetPlayerController(playerId));
 
-    PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
-    playableManager.SetPlayerState(playerId, PS_EPlayableControllerState.Disconnected);
+		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
+		playableManager.SetPlayerState(playerId, PS_EPlayableControllerState.Disconnected);
 
-    PS_DebugLogger.LogImportant("OnPlayerDisconnected player=" + playerId.ToString() + " gameModeState=" + typename.EnumToString(SCR_EGameModeState, GetState()), playerId);
+		PS_DebugLogger.LogImportant("OnPlayerDisconnected player=" + playerId.ToString() + " gameModeState=" + typename.EnumToString(SCR_EGameModeState, GetState()), playerId);
 
-    string guid = playableManager.GetPlayerGUIDById(playerId);
-    RplId controlledSlot;
-    if (playableManager.FindPlayerSlotById(playerId, controlledSlot))
-    {
-      PS_DebugLogger.LogImportant("OnPlayerDisconnected player=" + playerId.ToString() + " had slot=" + controlledSlot.ToString() + " scheduling RemoveDisconnectedPlayer in " + m_iReconnectTime.ToString() + "ms", playerId);
-      RplComponent rpl = RplComponent.Cast(Replication.FindItem(controlledSlot));
-      if (rpl)
-        rpl.GiveExt(RplIdentity.Local(), false);
-      playableManager.AddDisconnectedPlayerInfo(guid, controlledSlot, playerId);
-      if (GetState() != SCR_EGameModeState.GAME)
-        GetGame().GetCallqueue().CallLater(RemoveDisconnectedPlayer, m_iReconnectTime, false, playerId);
-      else
-        PS_DebugLogger.LogImportant("OnPlayerDisconnected GAME state — NOT scheduling RemoveDisconnectedPlayer (m_iReconnectTimeAfterBriefing applies)", playerId);
-    }
-    else
-    {
-      PS_DebugLogger.LogImportant("OnPlayerDisconnected player=" + playerId.ToString() + " had NO slot, removing directly", playerId);
-      playableManager.RemovePlayer(playerId, guid, true);
-    }
+		string guid = playableManager.GetPlayerGUIDById(playerId);
+		RplId controlledSlot;
+		if (playableManager.FindPlayerSlotById(playerId, controlledSlot))
+		{
+			PS_DebugLogger.LogImportant("OnPlayerDisconnected player=" + playerId.ToString() + " had slot=" + controlledSlot.ToString() + " scheduling RemoveDisconnectedPlayer in " + m_iReconnectTime.ToString() + "ms", playerId);
+			RplComponent rpl = RplComponent.Cast(Replication.FindItem(controlledSlot));
+			if (rpl)
+				rpl.GiveExt(RplIdentity.Local(), false);
+			playableManager.AddDisconnectedPlayerInfo(guid, controlledSlot, playerId);
+			if (GetState() != SCR_EGameModeState.GAME)
+				GetGame().GetCallqueue().CallLater(RemoveDisconnectedPlayer, m_iReconnectTime, false, playerId);
+			else
+				PS_DebugLogger.LogImportant("OnPlayerDisconnected GAME state — NOT scheduling RemoveDisconnectedPlayer (m_iReconnectTimeAfterBriefing applies)", playerId);
+		}
+		else
+		{
+			PS_DebugLogger.LogImportant("OnPlayerDisconnected player=" + playerId.ToString() + " had NO slot, removing directly", playerId);
+			playableManager.RemovePlayer(playerId, guid, true);
+		}
 
-    IEntity controlledEntity = playerController.GetControlledEntity();
-    if (controlledEntity)
-    {
-      // Guard against ultra-fast reconnect: if player is back already, don't touch their entity
-      if (GetGame().GetPlayerManager().IsPlayerConnected(playerId))
-      {
-          PS_DebugLogger.LogImportant("OnPlayerDisconnected player=" + playerId.ToString() + " reconnected before authority reset, skipping", playerId);
-      }
-      else
-      {
-          RplComponent rpl = RplComponent.Cast(controlledEntity.FindComponent(RplComponent));
-          if (rpl)
-            rpl.GiveExt(RplIdentity.Local(), false);
-      }
-    }
+		IEntity controlledEntity;
+		if (playerController)
+			controlledEntity = playerController.GetControlledEntity();
+		else
+			controlledEntity = null;
 
-    SCR_BaseGameMode.DisconnectPlayerBase(this, playerId, cause, timeout, controlledEntity);
-  }
+		if (controlledEntity)
+		{
+			if (GetGame().GetPlayerManager().IsPlayerConnected(playerId))
+			{
+				PS_DebugLogger.LogImportant("OnPlayerDisconnected player=" + playerId.ToString() + " reconnected before authority reset, skipping", playerId);
+			}
+	else
+		{
+			CharacterControllerComponent charController = CharacterControllerComponent.Cast(controlledEntity.FindComponent(CharacterControllerComponent));
+			if (charController)
+				charController.SetMovement(0, vector.Forward);
+			RplComponent rpl = RplComponent.Cast(controlledEntity.FindComponent(RplComponent));
+			if (rpl)
+				rpl.GiveExt(RplIdentity.Local(), false);
+		}
+		}
+
+		SCR_GroupsManagerComponent groupsManagerComponent = SCR_GroupsManagerComponent.GetInstance();
+		if (groupsManagerComponent)
+		{
+			SCR_AIGroup playerGroup = groupsManagerComponent.GetPlayerGroup(playerId);
+			if (playerGroup)
+				playerGroup.RemovePlayer(playerId);
+		}
+
+		SCR_BaseGameMode.DisconnectPlayerBase(this, playerId, cause, timeout, controlledEntity);
+	}
 
 	// ------------------------------------------ Faction Balance ------------------------------------------
 	bool CanJoinFaction(FactionKey factionKeyPlayer, FactionKey currentFaction)
@@ -915,10 +951,12 @@ class PS_GameModeCoop : SCR_BaseGameMode
     SCR_EGameModeState state = GetState();
     PS_DebugLogger.LogImportant("OnGameStateChanged state=" + typename.EnumToString(SCR_EGameModeState, state) + " isServer=" + Replication.IsServer().ToString() + " freezeTimeLeft=" + m_fCurrentFreezeTime.ToString());
 
-    PS_VoNChannelsManager VoNChannelsManager = PS_VoNChannelsManager.GetInstance();
-    PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
-    array<int> playerIds = new array<int>();
-    GetGame().GetPlayerManager().GetPlayers(playerIds);
+		PS_VoNChannelsManager VoNChannelsManager = PS_VoNChannelsManager.GetInstance();
+		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
+		array<int> playerIds = new array<int>();
+		PlayerManager playerManagerForState = GetGame().GetPlayerManager();
+		if (playerManagerForState)
+			playerManagerForState.GetPlayers(playerIds);
 
     // Log every player's state at game state transition (both server and client)
     foreach (int pid : playerIds)
@@ -1021,7 +1059,12 @@ class PS_GameModeCoop : SCR_BaseGameMode
 			playableManager.HolsterWeapons();
 		break;
 			case SCR_EGameModeState.GAME:
+				GetGame().GetCallqueue().Remove(DumpPlayableEntityState);
 				GetGame().GetCallqueue().CallLater(DumpPlayableEntityState, 10000, false);
+				break;
+			case SCR_EGameModeState.DEBRIEFING:
+			case SCR_EGameModeState.POSTGAME:
+				GetGame().GetCallqueue().Remove(DumpPlayableEntityState);
 				break;
 		}
 	}
@@ -1030,6 +1073,12 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	{
 		if (!Replication.IsServer())
 			return;
+		// Guard against firing in wrong state (e.g. after premature state change)
+		if (GetState() != SCR_EGameModeState.GAME)
+		{
+			PS_DebugLogger.LogImportant("DumpPlayableEntityState aborted: state != GAME");
+			return;
+		}
 		PS_PlayableManager pm = PS_PlayableManager.GetInstance();
 		if (!pm)
 			return;
@@ -1039,6 +1088,8 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		foreach (int pid : playerIds)
 		{
 			RplId slotId = pm.GetPlayableByPlayer(pid);
+			if (slotId == RplId.Invalid())
+				continue;
 			IEntity entity = IEntity.Cast(Replication.FindItem(slotId));
 			string entityState = "NULL";
 			if (entity) entityState = "ALIVE";
@@ -1091,33 +1142,76 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		OpenCurrentMenuOnClients();
 	}
 
+  protected ref array<int> m_StartGamePendingPlayers = new array<int>();
+  protected int m_StartGamePhase = 0;
+
   void StartGame()
   {
     PS_DebugLogger.LogImportant("StartGame BEGIN isServer=" + Replication.IsServer().ToString() + " reconnectTimeAfterBriefing=" + m_iReconnectTimeAfterBriefing.ToString());
     m_iReconnectTime = m_iReconnectTimeAfterBriefing;
     if (m_bReserveSlots)
       ReserveSlots();
+
     PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 
-    // Deploy all players to their slots FIRST, before any entity cleanup
+    // Phase 0: collect all players and stagger ApplyPlayable
+    array<int> allPlayers = {};
+    GetGame().GetPlayerManager().GetPlayers(allPlayers);
+    m_StartGamePendingPlayers.Clear();
+    foreach (int pid : allPlayers)
     {
-      array<int> allPlayers = {};
-      GetGame().GetPlayerManager().GetPlayers(allPlayers);
-      foreach (int pid : allPlayers)
-      {
-        RplId slotId = playableManager.GetPlayableByPlayer(pid);
-        PS_EPlayableControllerState pState = playableManager.GetPlayerState(pid);
-        PS_DebugLogger.LogImportant("StartGame deploying player=" + pid.ToString() + " slot=" + slotId.ToString() + " state=" + typename.EnumToString(PS_EPlayableControllerState, pState), pid);
-        playableManager.ApplyPlayable(pid);
-      }
+      RplId slotId = playableManager.GetPlayableByPlayer(pid);
+      PS_EPlayableControllerState pState = playableManager.GetPlayerState(pid);
+      PS_DebugLogger.LogImportant("StartGame queueing player=" + pid.ToString() + " slot=" + slotId.ToString() + " state=" + typename.EnumToString(PS_EPlayableControllerState, pState), pid);
+      m_StartGamePendingPlayers.Insert(pid);
     }
 
+    m_StartGamePhase = 0;
+    GetGame().GetCallqueue().CallLater(StartGamePhase_ApplyPlayables, 0, false);
+  }
+
+  protected void StartGamePhase_ApplyPlayables()
+  {
+    PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
+    // Apply up to 4 players per frame to avoid replication burst
+    int batchSize = 4;
+    for (int i = 0; i < batchSize && m_StartGamePendingPlayers.Count() > 0; i++)
+    {
+      int pid = m_StartGamePendingPlayers[0];
+      m_StartGamePendingPlayers.Remove(0);
+      playableManager.ApplyPlayable(pid);
+    }
+
+    if (m_StartGamePendingPlayers.Count() > 0)
+    {
+      GetGame().GetCallqueue().CallLater(StartGamePhase_ApplyPlayables, 50, false);
+      return;
+    }
+
+    // Move to next phase with a small delay to let replication catch up
+    GetGame().GetCallqueue().CallLater(StartGamePhase_Cleanup, 200, false);
+  }
+
+  protected void StartGamePhase_Cleanup()
+  {
+    PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
     playableManager.RemoveRedundantUnits();
+    // Wait for bulk deletion to settle before starting game mode
+    GetGame().GetCallqueue().CallLater(StartGamePhase_StartMode, 300, false);
+  }
+
+  protected void StartGamePhase_StartMode()
+  {
     PS_DebugLogger.LogImportant("StartGame freezeTime=" + m_iFreezeTime.ToString() + " starting restrictedZonesTimer");
     restrictedZonesTimer(m_iFreezeTime);
     StartGameMode();
-    PS_DebugLogger.LogImportant("StartGame AFTER StartGameMode, sending deploy RPC");
+    PS_DebugLogger.LogImportant("StartGame AFTER StartGameMode, scheduling deploy RPC");
+    // Small delay before sending the deploy broadcast so clients can process state changes
+    GetGame().GetCallqueue().CallLater(StartGamePhase_Deploy, 200, false);
+  }
 
+  protected void StartGamePhase_Deploy()
+  {
     Rpc(RPC_RequestDeployForAllPlayers);
     PS_DebugLogger.LogImportant("StartGame END");
   }
@@ -1217,6 +1311,8 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	void DisableBuildingMode()
 	{
 		SCR_EditorManagerCore editorManagerCore = SCR_EditorManagerCore.Cast(SCR_EditorManagerCore.GetInstance(SCR_EditorManagerCore));
+		if (!editorManagerCore)
+			return;
 		array<int> outPlayers = {};
 		GetGame().GetPlayerManager().GetAllPlayers(outPlayers);
 		foreach (int player : outPlayers)

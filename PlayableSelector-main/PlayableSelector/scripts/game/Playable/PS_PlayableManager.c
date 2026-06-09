@@ -337,12 +337,9 @@ class PS_PlayableManager : ScriptComponent
 			effectiveRplId = slot.m_RplId;
 		if (effectiveRplId == RplId.Invalid())
 		{
-			PS_DebugLogger.LogImportant("GetPlayableById SKIP: invalid RplId slotId=" + slotId.ToString() + " slotRplId=" + slot.m_RplId.ToString());
 			return null;
 		}
 		container.InitFromSlotData(slot, effectiveRplId);
-		PS_DebugLogger.LogImportant("GetPlayableById fallback slotId=" + slotId.ToString() + " effectiveRplId=" + effectiveRplId.ToString() + " factionKey=" + slot.m_FactionKey);
-		PS_DebugLogger.LogImportant("GetPlayableById RESULT containerRplId=" + container.GetRplId().ToString() + " containerFactionKey=" + container.GetFactionKey());
 		return container;
 	}
 
@@ -505,13 +502,13 @@ class PS_PlayableManager : ScriptComponent
 			RplComponent rpl = RplComponent.Cast(cached.FindComponent(RplComponent));
 			if (rpl && rpl.Id() == slotId)
 			{
-				PS_DebugLogger.LogImportant("FindValidatedSlotEntity Tier2 HIT slot=" + slotId.ToString());
+				//PS_DebugLogger.LogImportant("FindValidatedSlotEntity Tier2 HIT slot=" + slotId.ToString());
 				outSlotEntity = cached;
 				return true;
 			}
 			else
 			{
-				PS_DebugLogger.LogImportant("FindValidatedSlotEntity Tier2 STALE removing slot=" + slotId.ToString());
+				//PS_DebugLogger.LogImportant("FindValidatedSlotEntity Tier2 STALE removing slot=" + slotId.ToString());
 				// Stale cache — remove so we don't try again
 				m_EntityCache.Remove(slotId);
 			}
@@ -525,14 +522,14 @@ class PS_PlayableManager : ScriptComponent
 			RplComponent verifyRpl = RplComponent.Cast(slotData.m_CachedEntity.FindComponent(RplComponent));
 			if (verifyRpl && verifyRpl.Id() == slotId)
 			{
-				PS_DebugLogger.LogImportant("FindValidatedSlotEntity Tier3 HIT slot=" + slotId.ToString());
+				//PS_DebugLogger.LogImportant("FindValidatedSlotEntity Tier3 HIT slot=" + slotId.ToString());
 				m_EntityCache[slotId] = slotData.m_CachedEntity;
 				outSlotEntity = slotData.m_CachedEntity;
 				return true;
 			}
 		}
 
-		PS_DebugLogger.LogImportant("FindValidatedSlotEntity ALL MISS slot=" + slotId.ToString());
+		//PS_DebugLogger.LogImportant("FindValidatedSlotEntity ALL MISS slot=" + slotId.ToString());
 		return false;
 	}
 
@@ -767,6 +764,8 @@ class PS_PlayableManager : ScriptComponent
 	{
 		if (!Replication.IsServer())
 			return;
+		if (slotId == RplId.Invalid())
+			return;
 		if (!m_SlotsMap.Contains(slotId))
 			return;
 
@@ -805,6 +804,20 @@ class PS_PlayableManager : ScriptComponent
   [RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]
   protected void RPC_RemoveLobbySlot(RplId slotId)
   {
+    if (slotId == RplId.Invalid())
+    {
+      PS_DebugLogger.LogError("RPC_RemoveLobbySlot: invalid slotId");
+      return;
+    }
+
+    // JIP-safe: slot may not be replicated yet; retry later
+    if (!m_SlotsMap.Contains(slotId))
+    {
+      PS_DebugLogger.Log("RPC_RemoveLobbySlot slot=" + slotId.ToString() + " desync, retrying");
+      GetGame().GetCallqueue().CallLater(RetryRPC_RemoveLobbySlot, 500, false, slotId, 0);
+      return;
+    }
+
     int playerId;
     if (FindPlayerIdBySlot(slotId, playerId))
       m_PlayerSlotMap.Remove(playerId);
@@ -822,6 +835,24 @@ class PS_PlayableManager : ScriptComponent
     PS_DebugLogger.LogImportant("RPC_RemoveLobbySlot DONE slotsAfter=" + m_SlotsMap.Count().ToString());
 
     BuildSortedSlotsArray();
+  }
+
+  // JIP-safe retry for RPC_RemoveLobbySlot
+  protected void RetryRPC_RemoveLobbySlot(RplId slotId, int attempt)
+  {
+    if (slotId == RplId.Invalid())
+      return;
+    if (m_SlotsMap.Contains(slotId))
+    {
+      RPC_RemoveLobbySlot(slotId);
+      return;
+    }
+    if (attempt >= 20)
+    {
+      PS_DebugLogger.LogError("RetryRPC_RemoveLobbySlot GAVE UP after 20 attempts slot=" + slotId.ToString());
+      return;
+    }
+    GetGame().GetCallqueue().CallLater(RetryRPC_RemoveLobbySlot, 500, false, slotId, attempt + 1);
   }
 
 	protected int GetOrCreatePlayerGroup(RplId rplId, SCR_AIGroup group, out int encodedCallsign)
@@ -859,39 +890,93 @@ class PS_PlayableManager : ScriptComponent
 
 	array<RplId> BuildSortedSlotsArray()
 	{
-		array<RplId> slotsSorted = {};
-		int rawCount = 0;
+		// Step 1: group slots by faction
+		map<FactionKey, ref array<RplId>> factionSlots = new map<FactionKey, ref array<RplId>>();
 		foreach (RplId slotId, PS_SlotCharacterData slot : m_SlotsMap.GetRawMap())
 		{
-			rawCount++;
-			int groupId = slot.m_PlayerGroupId;
-			int callsign = m_GroupCallsignsMap[groupId];
-			int insertIndex = slotsSorted.Count();
+			FactionKey fk = slot.m_FactionKey;
+			if (!factionSlots.Contains(fk))
+				factionSlots[fk] = new array<RplId>();
+			factionSlots[fk].Insert(slotId);
+		}
 
-			for (int i = 0; i < slotsSorted.Count(); i++)
+		// Step 2: sort each faction's slots by callsign -> rank -> rplId
+		foreach (FactionKey fk, array<RplId> slots : factionSlots)
+		{
+			for (int i = 0; i < slots.Count(); i++)
 			{
-				RplId otherSlotId = slotsSorted[i];
-				int otherGroupId = GetSlotGroupId(otherSlotId);
-				int otherCallsign = m_GroupCallsignsMap[otherGroupId];
-				PS_SlotCharacterData otherSlot = m_SlotsMap[otherSlotId];
+				RplId slotId = slots[i];
+				PS_SlotCharacterData slot;
+				m_SlotsMap.Find(slotId, slot);
+				int groupId = slot.m_PlayerGroupId;
+				int callsign = m_GroupCallsignsMap[groupId];
 
-				bool rplIdGreater = otherSlotId > slotId;
-				bool rankEquival = slot.m_eCharacterRank == otherSlot.m_eCharacterRank;
-				bool rankGreater = slot.m_eCharacterRank > otherSlot.m_eCharacterRank;
-				bool callsignEquival = otherCallsign == callsign;
-				bool callsignGreater = otherCallsign > callsign;
+				int insertIndex = i;
+				for (int j = 0; j < i; j++)
+				{
+					RplId otherSlotId = slots[j];
+					PS_SlotCharacterData otherSlot;
+					m_SlotsMap.Find(otherSlotId, otherSlot);
+					int otherGroupId = otherSlot.m_PlayerGroupId;
+					int otherCallsign = m_GroupCallsignsMap[otherGroupId];
 
-				if ((((rplIdGreater && rankEquival) || rankGreater) && callsignEquival) || callsignGreater)
+					bool callsignEquival = otherCallsign == callsign;
+					bool callsignGreater = otherCallsign > callsign;
+					bool rankGreater = slot.m_eCharacterRank > otherSlot.m_eCharacterRank;
+					bool rankEquival = slot.m_eCharacterRank == otherSlot.m_eCharacterRank;
+					bool rplIdGreater = slotId > otherSlotId;
+
+					if ((((rplIdGreater && rankEquival) || rankGreater) && callsignEquival) || callsignGreater)
+					{
+						insertIndex = j;
+						break;
+					}
+				}
+				if (insertIndex != i)
+				{
+					slots.Remove(i);
+					slots.InsertAt(slotId, insertIndex);
+				}
+			}
+		}
+
+		// Step 3: build sorted faction list (more slots first, then alphabetical)
+		array<FactionKey> sortedFactions = {};
+		foreach (FactionKey fk, array<RplId> slots : factionSlots)
+		{
+			int insertIndex = sortedFactions.Count();
+			for (int i = 0; i < sortedFactions.Count(); i++)
+			{
+				FactionKey otherFk = sortedFactions[i];
+				int slotCount = factionSlots[fk].Count();
+				int otherSlotCount = factionSlots[otherFk].Count();
+				if (slotCount > otherSlotCount)
+				{
+					insertIndex = i;
+					break;
+				}
+				if (slotCount == otherSlotCount && fk < otherFk)
 				{
 					insertIndex = i;
 					break;
 				}
 			}
-			slotsSorted.InsertAt(slotId, insertIndex);
+			sortedFactions.InsertAt(fk, insertIndex);
 		}
+
+		// Step 4: assemble final sorted array
+		array<RplId> slotsSorted = {};
+		foreach (FactionKey fk : sortedFactions)
+		{
+			foreach (RplId slotId : factionSlots[fk])
+			{
+				slotsSorted.Insert(slotId);
+			}
+		}
+
 		m_SlotsSortedCached = slotsSorted;
 		if (slotsSorted.Count() > 0)
-			PS_DebugLogger.LogImportant("BuildSortedSlotsArray rawMap=" + rawCount.ToString() + " sorted=" + slotsSorted.Count().ToString() + " firstRplId=" + slotsSorted[0].ToString());
+			PS_DebugLogger.LogImportant("BuildSortedSlotsArray sorted=" + slotsSorted.Count().ToString() + " firstRplId=" + slotsSorted[0].ToString());
 		return slotsSorted;
 	}
 
@@ -1071,9 +1156,9 @@ class PS_PlayableManager : ScriptComponent
       return;
     }
 
-    if (attempt >= 10)
+    if (attempt >= 30)
     {
-      PS_DebugLogger.LogError("RetrySetPlayerToSlot GAVE UP after 10 attempts slot=" + slotId.ToString() + " playerId=" + playerId.ToString(), playerId);
+      PS_DebugLogger.LogError("RetrySetPlayerToSlot GAVE UP after 30 attempts slot=" + slotId.ToString() + " playerId=" + playerId.ToString(), playerId);
       return;
     }
 
@@ -1589,12 +1674,19 @@ class PS_PlayableManager : ScriptComponent
   {
     PS_DebugLogger.LogImportant("RPC_RemovePlayer player=" + playerId.ToString() + " guid=" + playerGuid, playerId);
 
+    // Guard against double-remove: player already gone
+    if (!m_PlayerSlotMap.Contains(playerId))
+    {
+      PS_DebugLogger.Log("RPC_RemovePlayer player=" + playerId.ToString() + " already removed, skipping");
+      return;
+    }
+
     RplId slotId;
     FindPlayerSlotById(playerId, slotId);
 
     {
       PS_SlotCharacterData sd;
-      if (m_SlotsMap.Find(slotId, sd))
+      if (slotId != RplId.Invalid() && m_SlotsMap.Find(slotId, sd))
         sd.m_PlayerId = -1;
     }
     m_PlayerSlotMap.Remove(playerId);
@@ -1751,6 +1843,7 @@ class PS_PlayableManager : ScriptComponent
 	}
 
 	protected bool m_bBulkRemoving;
+	protected int m_iPendingDeletions = 0;
 
 	void RemoveRedundantUnits()
 	{
@@ -1779,8 +1872,9 @@ class PS_PlayableManager : ScriptComponent
 		}
 
 		m_bBulkRemoving = true;
+		m_iPendingDeletions = 0;
 
-		// Phase 1: Detach entities from AI groups
+		// Phase 1: Detach entities from AI groups, freeze animation to reduce proxy RPC flood on deletion
 		foreach (RplId slotId : toRemove)
 		{
 			RplComponent rpl = RplComponent.Cast(Replication.FindItem(slotId));
@@ -1789,6 +1883,9 @@ class PS_PlayableManager : ScriptComponent
 			SCR_ChimeraCharacter character = SCR_ChimeraCharacter.Cast(rpl.GetEntity());
 			if (!character)
 				continue;
+			CharacterControllerComponent charController = CharacterControllerComponent.Cast(character.FindComponent(CharacterControllerComponent));
+			if (charController)
+				charController.SetMovement(0, vector.Forward);
 			AIControlComponent ai = AIControlComponent.Cast(character.FindComponent(AIControlComponent));
 			if (ai)
 			{
@@ -1802,7 +1899,7 @@ class PS_PlayableManager : ScriptComponent
 			}
 		}
 
-		// Phase 2: Queue deferred deletion — one entity per 50ms to avoid engine cascade
+		// Phase 2: Queue deferred deletion with pending-deletion tracking
 		int delay = 0;
 		foreach (RplId slotId : toRemove)
 		{
@@ -1812,14 +1909,21 @@ class PS_PlayableManager : ScriptComponent
 			if (rpl) entity = rpl.GetEntity();
 			m_EntityCache.Remove(slotId);
 			if (entity)
+			{
+				m_iPendingDeletions++;
 				m_CallQueue.CallLater(DeleteEntityDeferred, delay, false, entity);
+			}
 			delay += 50;
 		}
-		m_bBulkRemoving = false;
+		if (m_iPendingDeletions == 0)
+			m_bBulkRemoving = false;
 
+		// Phase 3: Stagger slot removals to avoid replication burst
+		int slotDelay = 0;
 		foreach (RplId slotId : toRemove)
 		{
-			RemoveLobbySlot(slotId);
+			m_CallQueue.CallLater(RemoveLobbySlot, slotDelay, false, slotId);
+			slotDelay += 50;
 		}
 
 		foreach (RplId ps : protectedSlots)
@@ -1859,6 +1963,9 @@ class PS_PlayableManager : ScriptComponent
 	{
 		if (entity)
 			SCR_EntityHelper.DeleteEntityAndChildren(entity);
+		m_iPendingDeletions--;
+		if (m_iPendingDeletions <= 0)
+			m_bBulkRemoving = false;
 	}
 
 	void HolsterWeapons()

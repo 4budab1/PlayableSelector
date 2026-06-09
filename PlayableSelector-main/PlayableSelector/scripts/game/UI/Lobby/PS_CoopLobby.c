@@ -212,7 +212,7 @@ class PS_CoopLobby : MenuBase
 			}
 		}
 	}
-	
+
 	override void OnMenuUpdate(float tDelta)
 	{
 		m_ChatPanel.OnUpdateChat(tDelta);
@@ -226,7 +226,8 @@ class PS_CoopLobby : MenuBase
 	
 	override void OnMenuClose()
 	{
-		m_PlayableControllerComponent.LobbyVoNDisableImmediate();
+		if (m_PlayableControllerComponent)
+			m_PlayableControllerComponent.LobbyVoNDisableImmediate();
 		if (m_InputManager)
 		{
 			m_InputManager.RemoveActionListener("VONDirect", EActionTrigger.DOWN, Action_LobbyVoNOn);
