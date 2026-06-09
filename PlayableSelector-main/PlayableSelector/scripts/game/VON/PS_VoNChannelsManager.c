@@ -56,10 +56,11 @@ class PS_VoNChannelsManager : ScriptComponent
     m_PlayerChannelKeyMap.Clear();
     m_ChannelKeyToRoomId.Clear();
     m_RoomIdToChannelKey.Clear();
-    m_iLastRoomId = 1;
-    SCR_BaseGameMode baseGameMode = SCR_BaseGameMode.Cast(GetGame().GetGameMode());
-    baseGameMode.GetOnPlayerConnected().Insert(OnPlayerConnected);
-  }
+		m_iLastRoomId = 1;
+		SCR_BaseGameMode baseGameMode = SCR_BaseGameMode.Cast(GetGame().GetGameMode());
+		if (baseGameMode)
+			baseGameMode.GetOnPlayerConnected().Insert(OnPlayerConnected);
+	}
 
   void OnPlayerConnected(int playerId)
   {
@@ -118,10 +119,12 @@ class PS_VoNChannelsManager : ScriptComponent
 		if (playerController)
 		{
 			PS_PlayableControllerComponent playableController = PS_PlayableControllerComponent.Cast(playerController.FindComponent(PS_PlayableControllerComponent));
-			if (playableController)
-			{
-				PS_GameModeCoop gameMode = PS_GameModeCoop.Cast(GetGame().GetGameMode());
-				SCR_EGameModeState state = gameMode.GetState();
+		if (playableController)
+		{
+			PS_GameModeCoop gameMode = PS_GameModeCoop.Cast(GetGame().GetGameMode());
+			if (!gameMode)
+				return;
+			SCR_EGameModeState state = gameMode.GetState();
 				PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 
 				if (roomName.StartsWith("#PS-VoNRoom_Local"))

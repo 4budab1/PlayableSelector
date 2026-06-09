@@ -55,7 +55,9 @@ modded class SCR_RespawnSystemComponent : RespawnSystemComponent
 	override bool IsPauseMenuRespawnEnabled() {return null;} 
 	override bool IsFactionChangeAllowed() {return false;} 
 	override ScriptInvoker GetOnRespawnEnabledChanged() {return null;} 
-	override void OnPlayerRegistered_S(int playerId) {return;}	
+	override void OnPlayerRegistered_S(int playerId) {return;}
+	override void OnPlayerDisconnected_S(int playerId, KickCauseCode cause, int timeout) {return;}
+	override void OnPlayerDeleted_S(int playerId) {return;}
 	override void OnInit(IEntity owner) {return;}
-	override void OnPlayerAuditSuccess_S(int playerId)	{return;}
+	override void OnPlayerAuditSuccess_S(int playerId) {return;}
 }
