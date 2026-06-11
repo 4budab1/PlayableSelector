@@ -74,23 +74,25 @@ class PS_PlayableManager : ScriptComponent
 	protected ref ReplicatedBasicMap<int, int> m_GroupCallsignsMap = new ReplicatedBasicMap<int, int>();
 	[RplProp()]
 	protected ref ReplicatedBasicMap<int, string> m_PlayerNamesCached = new ReplicatedBasicMap<int, string>();
-	[RplProp()]
+	// Non-replicated: confirmed dead code (no callers of GetGroupEntityName in scripts/).
+	// Removed [RplProp()] to shrink JIP/reconnect snapshots. Kept as a regular map for
+	// potential future use; writes in RPC_InsertLobbySlot still populate it server-side only.
 	protected ref ReplicatedBasicMap<int, string> m_GroupEntityNames = new ReplicatedBasicMap<int, string>();
-	[RplProp()]
 	ref array<RplId> m_SlotsSortedCached = {};
 
-	array<RplId> GetSortedSlotIds() { return m_SlotsSortedCached; }
+	array<RplId> GetSortedSlotIds()
+	{
+		if (m_SlotsSortedCached.Count() != m_SlotsMap.Count())
+			BuildSortedSlotsArray();
+		return m_SlotsSortedCached;
+	}
 	[RplProp()]
 	protected ref ReplicatedClassMap<RplId, ref PS_VehicleData> m_VehicleMap = new ReplicatedClassMap<RplId, ref PS_VehicleData>();
 	[RplProp()]
 	protected ref ReplicatedBasicMap<FactionKey, int> m_FactionReadyMap = new ReplicatedBasicMap<FactionKey, int>();
-	[RplProp()]
 	protected ref ReplicatedBasicMap<int, FactionKey> m_PlayerFactionMap = new ReplicatedBasicMap<int, FactionKey>();
-	[RplProp()]
 	protected ref ReplicatedBasicMap<int, PS_EPlayableControllerState> m_PlayerStatesMap = new ReplicatedBasicMap<int, PS_EPlayableControllerState>();
-	[RplProp()]
 	protected ref ReplicatedBasicMap<int, bool> m_PlayerPinMap = new ReplicatedBasicMap<int, bool>();
-	[RplProp()]
 	protected ref array<int> m_DisconnectedPlayersClient = {};
 	[RplProp()]
 	int m_iMaxPlayersCount = 1;
@@ -152,14 +154,30 @@ class PS_PlayableManager : ScriptComponent
 		return m_SlotsMap.Find(slotId, slotData);
 	}
 
+
+
 	bool FindPlayerIdBySlot(RplId slotId, out int playerId)
 	{
 		PS_SlotCharacterData slot;
-		if (FindSlotData(slotId, slot))
+		if (FindSlotData(slotId, slot) && slot.m_PlayerId != -1)
+		{
 			playerId = slot.m_PlayerId;
-		else
-			playerId = -1;
-		return playerId != -1;
+			return true;
+		}
+		// Fallback for JIP clients: m_SlotsMap may have stale m_PlayerId because
+		// ReplicatedClassMap does not replicate per-field mutations inside class values.
+		// Use the replicated m_PlayerSlotMap (playerId -> slotId) as the authoritative
+		// source for slot-to-player lookup.
+		foreach (int pid, RplId sid : m_PlayerSlotMap.GetRawMap())
+		{
+			if (sid == slotId)
+			{
+				playerId = pid;
+				return true;
+			}
+		}
+		playerId = -1;
+		return false;
 	}
 
 	bool FindPlayerSlotById(int playerId, out RplId slotId)
@@ -278,7 +296,7 @@ class PS_PlayableManager : ScriptComponent
 
 		int groupId = GetSlotGroupId(slotId);
 		FactionKey factionKey = GetSlotFactionKey(slotId);
-		foreach (RplId otherSlotId : m_SlotsSortedCached)
+		foreach (RplId otherSlotId : GetSortedSlotIds())
 		{
 			if (factionKey != GetSlotFactionKey(otherSlotId))
 				continue;
@@ -302,7 +320,7 @@ class PS_PlayableManager : ScriptComponent
 		if (!FindPlayerSlotById(playerId, slotId) || slotId == RplId.Invalid())
 			return false;
 		factionKey = GetSlotFactionKey(slotId);
-		foreach (RplId otherSlotId : m_SlotsSortedCached)
+		foreach (RplId otherSlotId : GetSortedSlotIds())
 		{
 			if (factionKey != GetSlotFactionKey(otherSlotId))
 				continue;
@@ -350,7 +368,7 @@ class PS_PlayableManager : ScriptComponent
 		else
 			groupLeaders.Clear();
 		ref map<FactionKey, ref array<int>> result = new map<FactionKey, ref array<int>>();
-		foreach (RplId slotId : m_SlotsSortedCached)
+		foreach (RplId slotId : GetSortedSlotIds())
 		{
 			FactionKey factionKey = GetSlotFactionKey(slotId);
 			if (!result.Contains(factionKey))
@@ -548,27 +566,27 @@ class PS_PlayableManager : ScriptComponent
 
     PS_EPlayableControllerState prevState = GetPlayerState(playerId);
     RplId prevSlotId = GetPlayableByPlayer(playerId);
-    PS_DebugLogger.LogImportant("ApplyPlayable SRV START playerId=" + playerId.ToString() + " prevState=" + typename.EnumToString(PS_EPlayableControllerState, prevState) + " prevSlot=" + prevSlotId.ToString(), playerId);
+    PS_DebugLogger.Log("ApplyPlayable SRV START playerId=" + playerId.ToString() + " prevState=" + typename.EnumToString(PS_EPlayableControllerState, prevState) + " prevSlot=" + prevSlotId.ToString(), playerId);
 
     SetPlayerState(playerId, PS_EPlayableControllerState.Playing);
 
     RplId slotId = GetPlayableByPlayer(playerId);
-    PS_DebugLogger.LogImportant("ApplyPlayable SRV slotId=" + slotId.ToString() + " playerId=" + playerId.ToString(), playerId);
+    PS_DebugLogger.Log("ApplyPlayable SRV slotId=" + slotId.ToString() + " playerId=" + playerId.ToString(), playerId);
 
+		// Echo Lobby pattern: destroyed slot — player stays on slot, spectator handled by HandlePlayerKilled.
 		if (slotId != RplId.Invalid() && IsSlotCharacterDestroyed(slotId))
 		{
-			PS_DebugLogger.LogImportant("ApplyPlayable BRANCH: slot destroyed, delayed switch playerId=" + playerId.ToString(), playerId);
+			PS_DebugLogger.Log("ApplyPlayable BRANCH: slot destroyed (Echo Lobby pattern) playerId=" + playerId.ToString(), playerId);
 			PS_VoNChannelsManager vonManager = PS_VoNChannelsManager.GetInstance();
 			if (vonManager)
 				vonManager.SetPlayerToChannel(playerId, "");
-			m_CallQueue.CallLater(DelayedSwitchToInitialEntity, 1000, false, playerId);
 			return;
 		}
 
 		IEntity entity;
 		if (slotId == RplId.Invalid())
 		{
-			PS_DebugLogger.LogImportant("ApplyPlayable BRANCH: slot INVALID, switching to spectator playerId=" + playerId.ToString(), playerId);
+			PS_DebugLogger.Log("ApplyPlayable BRANCH: slot INVALID, switching to spectator playerId=" + playerId.ToString(), playerId);
 			SCR_GroupsManagerComponent groupsManagerComponent = SCR_GroupsManagerComponent.GetInstance();
 			SCR_AIGroup currentGroup = groupsManagerComponent.GetPlayerGroup(playerId);
 			if (currentGroup)
@@ -600,7 +618,7 @@ class PS_PlayableManager : ScriptComponent
 
 		if (!m_SlotsMap.Contains(slotId))
 		{
-			PS_DebugLogger.LogImportant("ApplyPlayable FAIL: slot not in map slotId=" + slotId.ToString(), playerId);
+			PS_DebugLogger.Log("ApplyPlayable FAIL: slot not in map slotId=" + slotId.ToString(), playerId);
 			return;
 		}
 
@@ -610,26 +628,24 @@ class PS_PlayableManager : ScriptComponent
 
 		if (!foundEntity)
 		{
-			PS_DebugLogger.LogImportant("ApplyPlayable: entity not found for slotId=" + slotId.ToString() + " retrying in 1s", playerId);
+			PS_DebugLogger.Log("ApplyPlayable: entity not found for slotId=" + slotId.ToString() + " retrying in 1s", playerId);
 			m_CallQueue.CallLater(RetryApplyPlayable, 1000, false, playerId, slotId, 0);
 			return;
-		}
-
-		PS_DebugLogger.LogImportant("ApplyPlayable: entity FOUND for slotId=" + slotId.ToString() + " playerId=" + playerId.ToString(), playerId);
+		}			PS_DebugLogger.Log("ApplyPlayable: entity FOUND for slotId=" + slotId.ToString() + " playerId=" + playerId.ToString(), playerId);
 
 		IEntity defaultEntity = playableController.GetInitialEntity();
 		if (defaultEntity)
 		{
-			PS_DebugLogger.LogImportant("ApplyPlayable defaultEntity EXISTS, deleting playerId=" + playerId.ToString(), playerId);
+			PS_DebugLogger.Log("ApplyPlayable defaultEntity EXISTS, deleting playerId=" + playerId.ToString(), playerId);
 			SCR_EntityHelper.DeleteEntityAndChildren(defaultEntity);
 		}
 		else
 		{
-			PS_DebugLogger.LogImportant("ApplyPlayable defaultEntity NULL playerId=" + playerId.ToString(), playerId);
+			PS_DebugLogger.Log("ApplyPlayable defaultEntity NULL playerId=" + playerId.ToString(), playerId);
 		}
 
 		playerController.SetInitialMainEntity(slotEntity);
-		PS_DebugLogger.LogImportant("ApplyPlayable SetInitialMainEntity done, calling ChangeGroup", playerId);
+			PS_DebugLogger.Log("ApplyPlayable SetInitialMainEntity done, calling ChangeGroup", playerId);
 
 		SCR_ChimeraCharacter playableCharacter = SCR_ChimeraCharacter.Cast(slotEntity);
 		if (!playableCharacter)
@@ -643,14 +659,14 @@ class PS_PlayableManager : ScriptComponent
 		if (vonManager)
 			vonManager.SetPlayerToChannel(playerId, "");
 		
-		PS_DebugLogger.LogImportant("ApplyPlayable SUCCESS player=" + playerId.ToString() + " slot=" + slotId.ToString(), playerId);
+			PS_DebugLogger.Log("ApplyPlayable SUCCESS player=" + playerId.ToString() + " slot=" + slotId.ToString(), playerId);
 	}
 
 	protected void RetryApplyPlayable(int playerId, RplId slotId, int attempt)
 	{
 		if (!m_SlotsMap.Contains(slotId))
 		{
-			PS_DebugLogger.LogImportant("RetryApplyPlayable FAIL: slot removed from map slotId=" + slotId.ToString(), playerId);
+			PS_DebugLogger.Log("RetryApplyPlayable FAIL: slot removed from map slotId=" + slotId.ToString(), playerId);
 			return;
 		}
 		
@@ -658,28 +674,21 @@ class PS_PlayableManager : ScriptComponent
 		bool found = FindValidatedSlotEntity(slotId, slotEntity);
 		if (found)
 		{
-			PS_DebugLogger.LogImportant("RetryApplyPlayable SUCCESS on attempt=" + attempt.ToString() + " slotId=" + slotId.ToString(), playerId);
+			PS_DebugLogger.Log("RetryApplyPlayable SUCCESS on attempt=" + attempt.ToString() + " slotId=" + slotId.ToString(), playerId);
 			ApplyPlayable(playerId);
 			return;
-		}
-		
-		if (attempt >= 30)
-		{
-			PS_DebugLogger.LogImportant("RetryApplyPlayable GAVE UP after 30 attempts, marking slot destroyed slotId=" + slotId.ToString(), playerId);
-			SetSlotDestroyed(slotId, true);
-			m_CallQueue.Remove(RetryApplyPlayable);
-			ApplyPlayable(playerId);
-			return;
-		}
-		
-		m_CallQueue.CallLater(RetryApplyPlayable, 1000, false, playerId, slotId, attempt + 1);
+		}    if (attempt >= 5)
+    {
+      PS_DebugLogger.LogError("RetryApplyPlayable GAVE UP after 5 attempts, marking slot destroyed slotId=" + slotId.ToString(), playerId);
+      SetSlotDestroyed(slotId, true);
+      m_CallQueue.Remove(RetryApplyPlayable);
+      ApplyPlayable(playerId);
+      return;
+    }
+    
+    m_CallQueue.CallLater(RetryApplyPlayable, 1000, false, playerId, slotId, attempt + 1);
 	}
 	
-	protected void DelayedSwitchToInitialEntity(int playerId)
-	{
-		PS_GameModeCoop gameModeCoop = PS_GameModeCoop.Cast(GetGame().GetGameMode());
-		gameModeCoop.SwitchToInitialEntity(playerId);
-	}
 
 	void ChangeGroup(int playerId, RplId slotId)
 	{
@@ -730,7 +739,13 @@ class PS_PlayableManager : ScriptComponent
 
 		PS_VoNChannelsManager vonManager = PS_VoNChannelsManager.GetInstance();
 		if (vonManager)
+		{
 			vonManager.InitChannelIfNeeded(vonManager.GetFactionChannelKey(slot.m_FactionKey));
+			// Also pre-create the group room so it's available in lobby/briefing
+			// without waiting for EnsureAllFactionAndGroupRoomsExist on state transition.
+			if (encodedCallsign > 0)
+				vonManager.InitChannelIfNeeded(vonManager.BuildChannelKey(slot.m_FactionKey, encodedCallsign.ToString()));
+		}
 	}
 
   [RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]
@@ -853,9 +868,9 @@ class PS_PlayableManager : ScriptComponent
       RPC_RemoveLobbySlot(slotId);
       return;
     }
-    if (attempt >= 20)
+    if (attempt >= 5)
     {
-      PS_DebugLogger.LogError("RetryRPC_RemoveLobbySlot GAVE UP after 20 attempts slot=" + slotId.ToString());
+      PS_DebugLogger.LogError("RetryRPC_RemoveLobbySlot GAVE UP after 5 attempts slot=" + slotId.ToString());
       return;
     }
     GetGame().GetCallqueue().CallLater(RetryRPC_RemoveLobbySlot, 500, false, slotId, attempt + 1);
@@ -864,20 +879,40 @@ class PS_PlayableManager : ScriptComponent
 	protected int GetOrCreatePlayerGroup(RplId rplId, SCR_AIGroup group, out int encodedCallsign)
 	{
 		int aiGroupId = RplComponent.Cast(group.FindComponent(RplComponent)).Id();
+
+		// Reuse existing player group if one was already created for this AI group.
+		// All slots from the same AI group share a single player group, so the lobby
+		// squad header shows one group per squad (e.g. "Dinamo-11") with all roles under it.
 		int playerGroupId;
 		if (m_AIToPlayerGroupMap.Find(aiGroupId, playerGroupId))
 		{
 			encodedCallsign = m_GroupCallsignsMap[playerGroupId];
+			PS_DebugLogger.Log("GetOrCreatePlayerGroup REUSING slot=" + rplId.ToString() + " aiGroupId=" + aiGroupId.ToString() + " playerGroupId=" + playerGroupId.ToString());
 			return playerGroupId;
 		}
+
+		// Prefer the PS_GroupCallsignAssigner component on the AI group when present
+		// (the World Editor "Assign callsigns" tool bakes C/P/S into it). Fall back to
+		// the vanilla SCR_CallsignGroupComponent only if no manual assignment exists.
+		// This mirrors ReforgerLobby17's UpdateGroupCallsign precedence so the callsign
+		// sequence in the lobby matches for missions authored with the old editor tool.
+		int company, platoon, squad;
+		PS_GroupCallsignAssigner groupCallsignAssigner = PS_GroupCallsignAssigner.Cast(group.FindComponent(PS_GroupCallsignAssigner));
+		if (groupCallsignAssigner)
+		{
+			groupCallsignAssigner.GetCallsign(company, platoon, squad);
+		}
+		else
+		{
+			SCR_CallsignGroupComponent groupCallsign = SCR_CallsignGroupComponent.Cast(group.FindComponent(SCR_CallsignGroupComponent));
+			groupCallsign.GetCallsignIndexes(company, platoon, squad);
+		}
+		encodedCallsign = 1000000 * company + 1000 * platoon + squad;
 
 		SCR_GroupsManagerComponent groupsManager = SCR_GroupsManagerComponent.GetInstance();
 		Faction groupFaction = group.GetFaction();
 
-		SCR_CallsignGroupComponent groupCallsign = SCR_CallsignGroupComponent.Cast(group.FindComponent(SCR_CallsignGroupComponent));
-		int company, platoon, squad;
-		groupCallsign.GetCallsignIndexes(company, platoon, squad);
-		encodedCallsign = 1000000 * company + 1000 * platoon + squad;
+		PS_DebugLogger.LogImportant("GetOrCreatePlayerGroup CREATING slot=" + rplId.ToString() + " aiGroupId=" + aiGroupId.ToString() + " callsign=" + encodedCallsign.ToString());
 
 		SCR_AIGroup joinableGroup = groupsManager.CreateNewPlayableGroup(groupFaction);
 		SCR_CallsignGroupComponent joinableGroupCallsign = SCR_CallsignGroupComponent.Cast(joinableGroup.FindComponent(SCR_CallsignGroupComponent));
@@ -891,6 +926,9 @@ class PS_PlayableManager : ScriptComponent
 		GetGame().GetCallqueue().Call(joinableGroupCallsign.DoAssignCallsign, company, platoon, squad);
 		GetGame().GetCallqueue().Call(joinableGroup.SetSlave, group);
 
+		m_AIToPlayerGroupMap[aiGroupId] = joinableGroup.GetGroupID();
+
+		PS_DebugLogger.LogImportant("GetOrCreatePlayerGroup DONE slot=" + rplId.ToString() + " playerGroupId=" + joinableGroup.GetGroupID().ToString());
 		return joinableGroup.GetGroupID();
 	}
 
@@ -1051,7 +1089,7 @@ class PS_PlayableManager : ScriptComponent
     FactionKey oldFactionKey = GetPlayerFactionKey(playerId);
     PS_EPlayableControllerState prevState = GetPlayerState(playerId);
     SCR_EGameModeState gameModeState = PS_GameModeCoop.Cast(GetGame().GetGameMode()).GetState();
-    PS_DebugLogger.LogImportant("SetPlayerToSlot SRV player=" + playerId.ToString() + " slot=" + slotId.ToString() + " prevSlot=" + prevSlotId.ToString() + " oldFaction=" + oldFactionKey + " playerState=" + typename.EnumToString(PS_EPlayableControllerState, prevState) + " gameModeState=" + typename.EnumToString(SCR_EGameModeState, gameModeState), playerId);
+    PS_DebugLogger.Log("SetPlayerToSlot SRV player=" + playerId.ToString() + " slot=" + slotId.ToString() + " prevSlot=" + prevSlotId.ToString() + " oldFaction=" + oldFactionKey + " playerState=" + typename.EnumToString(PS_EPlayableControllerState, prevState) + " gameModeState=" + typename.EnumToString(SCR_EGameModeState, gameModeState), playerId);
 
     RPC_SetPlayerToSlot(slotId, playerId);
     Rpc(RPC_SetPlayerToSlot, slotId, playerId);
@@ -1162,9 +1200,9 @@ class PS_PlayableManager : ScriptComponent
       return;
     }
 
-    if (attempt >= 30)
+    if (attempt >= 5)
     {
-      PS_DebugLogger.LogError("RetrySetPlayerToSlot GAVE UP after 30 attempts slot=" + slotId.ToString() + " playerId=" + playerId.ToString(), playerId);
+      PS_DebugLogger.LogError("RetrySetPlayerToSlot GAVE UP after 5 attempts slot=" + slotId.ToString() + " playerId=" + playerId.ToString(), playerId);
       return;
     }
 
@@ -1333,6 +1371,13 @@ class PS_PlayableManager : ScriptComponent
 		m_PlayerStatesMap.Find(playerId, state);
 		return state;
 	}
+
+	// Getters for JIP sync (maps are no longer [RplProp])
+	ReplicatedBasicMap<int, FactionKey> GetPlayerFactionMap() { return m_PlayerFactionMap; }
+	ReplicatedBasicMap<int, PS_EPlayableControllerState> GetPlayerStatesMap() { return m_PlayerStatesMap; }
+	ReplicatedBasicMap<int, bool> GetPlayerPinMap() { return m_PlayerPinMap; }
+	array<int> GetDisconnectedPlayersClient() { return m_DisconnectedPlayersClient; }
+	ReplicatedBasicMap<int, string> GetPlayerNamesCached() { return m_PlayerNamesCached; }
 
 	// --------------------------------------------------------------------------------------------
 	void SetPlayerName(int playerId, string playerName)
@@ -1534,10 +1579,10 @@ class PS_PlayableManager : ScriptComponent
 			return;
 		PS_SlotCharacterData slot = m_SlotsMap[slotId];
 		slot.m_eDamageState = damageState;
+		if (damageState == EDamageState.DESTROYED)
+			slot.m_IsDestroyed = true;
 		RPC_OnSlotDamageStateChanged(slotId, damageState);
 		Rpc(RPC_OnSlotDamageStateChanged, slotId, damageState);
-		if (damageState == EDamageState.DESTROYED)
-			SetSlotDestroyed(slotId, true);
 	}
   [RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]
   void RPC_OnSlotDamageStateChanged(RplId slotId, EDamageState damageState)
@@ -1547,7 +1592,22 @@ class PS_PlayableManager : ScriptComponent
     {
       PS_SlotCharacterData sd;
       if (m_SlotsMap.Find(slotId, sd))
+      {
         sd.m_eDamageState = damageState;
+        if (damageState == EDamageState.DESTROYED)
+        {
+          sd.m_IsDestroyed = true;
+          m_CallbackHandler.GetOnSlotDestroyed().Invoke(slotId, true);
+        }
+
+        // BUGFIX: Notify listeners via callback so the Alive Players spectator
+        // selectors update dead/alive display. Uses a callback (not GetPlayableById)
+        // because GetPlayableById creates a brand-new container via InitFromSlotData
+        // when the entity isn't replicated — that new container has zero subscribers
+        // and the real selectors (created during InitList) never get notified.
+        // The callback lets PS_AlivePlayerList look up the selector by slotId directly.
+        m_CallbackHandler.GetOnSlotDamageStateChanged().Invoke(slotId, damageState);
+      }
     }
     else
     {
@@ -1709,7 +1769,13 @@ class PS_PlayableManager : ScriptComponent
 		int oldPlayerId;
 		m_PlayerGUIDtoIdCached.Find(playerGuid, oldPlayerId);
 		m_PlayerGUIDtoIdCached.Set(playerGuid, playerId);
-		m_PlayerIdToGuidCached.ReplaceKey(oldPlayerId, playerId);
+		if (oldPlayerId == playerId)
+			return;
+		if (m_PlayerIdToGuidCached.Contains(oldPlayerId))
+		{
+			m_PlayerIdToGuidCached.Set(playerId, m_PlayerIdToGuidCached.Get(oldPlayerId));
+			m_PlayerIdToGuidCached.Remove(oldPlayerId);
+		}
 
 		PS_DebugLogger.LogImportant("UpdatePlayerReconnected newPlayer=" + playerId.ToString() + " oldPlayer=" + oldPlayerId.ToString());
 
@@ -1748,6 +1814,83 @@ class PS_PlayableManager : ScriptComponent
 	void InvokePlayerReconnected(int playerId, int oldPlayerId)
 	{
 		m_CallbackHandler.GetOnPlayerReconnected().Invoke(oldPlayerId, playerId);
+	}
+
+	// ---- JIP Sync: send full state of non-RplProp maps to a connecting client ----
+	void SyncStateToClient(int playerId)
+	{
+		SyncStateToClientInternal(playerId, 0);
+	}
+
+	protected void SyncStateToClientInternal(int playerId, int attempt)
+	{
+		PlayerController pc = m_PlayerManager.GetPlayerController(playerId);
+		if (!pc)
+		{
+			if (attempt < 10)
+			{
+				PS_DebugLogger.Log("SyncStateToClient player=" + playerId.ToString() + " controller NULL, retrying attempt=" + attempt.ToString());
+				m_CallQueue.CallLater(SyncStateToClientInternal, 200, false, playerId, attempt + 1);
+			}
+			else
+			{
+				PS_DebugLogger.LogError("SyncStateToClient GAVE UP after " + attempt.ToString() + " attempts player=" + playerId.ToString());
+			}
+			return;
+		}
+		PS_PlayableControllerComponent pcc = PS_PlayableControllerComponent.Cast(pc.FindComponent(PS_PlayableControllerComponent));
+		if (!pcc)
+		{
+			if (attempt < 10)
+			{
+				PS_DebugLogger.Log("SyncStateToClient player=" + playerId.ToString() + " pcc NULL, retrying attempt=" + attempt.ToString());
+				m_CallQueue.CallLater(SyncStateToClientInternal, 200, false, playerId, attempt + 1);
+			}
+			else
+			{
+				PS_DebugLogger.LogError("SyncStateToClient GAVE UP: pcc NULL after " + attempt.ToString() + " attempts player=" + playerId.ToString());
+			}
+			return;
+		}
+
+		// Build faction array
+		array<int> fKeys = {};
+		array<string> fVals = {};
+		foreach (int pid, FactionKey fk : m_PlayerFactionMap.GetRawMap())
+		{
+			fKeys.Insert(pid);
+			fVals.Insert(fk);
+		}
+
+		// Build states array
+		array<int> sKeys = {};
+		array<int> sVals = {};
+		foreach (int pid, PS_EPlayableControllerState st : m_PlayerStatesMap.GetRawMap())
+		{
+			sKeys.Insert(pid);
+			sVals.Insert(st);
+		}
+
+		// Build pin array
+		array<int> pKeys = {};
+		array<bool> pVals = {};
+		foreach (int pid, bool pinned : m_PlayerPinMap.GetRawMap())
+		{
+			pKeys.Insert(pid);
+			pVals.Insert(pinned);
+		}
+
+		// Build names array
+		array<int> nKeys = {};
+		array<string> nVals = {};
+		foreach (int pid, string name : m_PlayerNamesCached.GetRawMap())
+		{
+			nKeys.Insert(pid);
+			nVals.Insert(name);
+		}
+
+		pcc.SyncFullState(fKeys, fVals, sKeys, sVals, pKeys, pVals, m_DisconnectedPlayersClient, nKeys, nVals);
+		PS_DebugLogger.LogImportant("SyncStateToClient SUCCESS player=" + playerId.ToString() + " attempt=" + attempt.ToString() + " factions=" + fKeys.Count().ToString() + " states=" + sKeys.Count().ToString() + " pins=" + pKeys.Count().ToString() + " disconnected=" + m_DisconnectedPlayersClient.Count().ToString() + " names=" + nKeys.Count().ToString());
 	}
 
 	void InvokePlayerConnectedOnClients(int playerId)
@@ -1832,7 +1975,7 @@ class PS_PlayableManager : ScriptComponent
 
 		int thisGroupId = GetSlotGroupId(thisSlotId);
 
-		foreach (RplId slotId : m_SlotsSortedCached)
+		foreach (RplId slotId : GetSortedSlotIds())
 		{
 			int playerId;
 			if (!FindPlayerIdBySlot(slotId, playerId) || playerId <= 0)
@@ -2142,7 +2285,7 @@ class PS_PlayableManager : ScriptComponent
 	array<PS_PlayableContainer> GetPlayablesSorted()
 	{
 		array<PS_PlayableContainer> result = {};
-		foreach (RplId slotId : m_SlotsSortedCached)
+		foreach (RplId slotId : GetSortedSlotIds())
 		{
 			PS_PlayableContainer container = GetPlayableById(slotId);
 			if (container)
@@ -2154,12 +2297,22 @@ class PS_PlayableManager : ScriptComponent
 	map<RplId, ref PS_PlayableContainer> GetPlayables()
 	{
 		map<RplId, ref PS_PlayableContainer> result = new map<RplId, ref PS_PlayableContainer>();
+		int slotCount = m_SlotsMap.Count();
+		PS_DebugLogger.LogImportant("GetPlayables slotsMapCount=" + slotCount.ToString() + " sortedCount=" + m_SlotsSortedCached.Count().ToString());
 		foreach (RplId slotId, PS_SlotCharacterData slot : m_SlotsMap.GetRawMap())
 		{
 			PS_PlayableContainer container = GetPlayableById(slotId);
 			if (container)
+			{
+				PS_DebugLogger.Log("GetPlayables INSERT slotId=" + slotId.ToString() + " containerRplId=" + container.GetRplId().ToString() + " name=" + container.GetName() + " faction=" + container.GetFactionKey());
 				result.Insert(slotId, container);
+			}
+			else
+			{
+				PS_DebugLogger.LogError("GetPlayables SKIP_NULL_CONTAINER slotId=" + slotId.ToString());
+			}
 		}
+		PS_DebugLogger.LogImportant("GetPlayables DONE resultCount=" + result.Count().ToString() + " slotsMapCount=" + slotCount.ToString());
 		return result;
 	}
 

@@ -80,6 +80,10 @@ modded class SCR_BaseGameMode
 
 		m_eGameState = state;
 		Replication.BumpMe();
+		// Echo Lobby calls BumpMe() here too. Guarantees m_eGameState is encoded
+		// in the current replication frame rather than waiting for the next diff.
+		// Critical for state transitions (PREGAME→SLOTTING→BRIEFING→GAME) where
+		// clients need to react immediately to open the correct menu.
 
 		OnGameStateChanged();
 	}

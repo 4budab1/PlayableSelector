@@ -1,7 +1,12 @@
+class PS_RateLimitEntry
+{
+	ref array<float> m_Timestamps = {};
+}
+
 class PS_DebugLogger
 {
 	static bool DebugEnabled = true;
-	private static ref map<string, ref array<float>> m_RateTracker = new map<string, ref array<float>>();
+	private static ref map<string, ref PS_RateLimitEntry> m_RateTracker = new map<string, ref PS_RateLimitEntry>();
 	private const int MAX_DUPLICATES = 5;
 	private const float DEDUP_WINDOW = 10.0;
 
@@ -39,6 +44,10 @@ class PS_DebugLogger
 			role = "[SRV]";
 		else
 			role = "[CLI]";
+		string key = prefix + role + message;
+
+		if (!IsAllowed(key))
+			return;
 
 		Print(prefix + role + " " + message, LogLevel.NORMAL);
 	}
@@ -75,19 +84,21 @@ class PS_DebugLogger
 	{
 		float now = GetGame().GetWorld().GetWorldTime();
 
-		if (!m_RateTracker.Contains(key))
-			m_RateTracker[key] = {};
-
-		array<float> timestamps = m_RateTracker[key];
+		ref PS_RateLimitEntry entry;
+		if (!m_RateTracker.Find(key, entry))
+		{
+			entry = new PS_RateLimitEntry();
+			m_RateTracker.Insert(key, entry);
+		}
 
 		// Purge old entries — timestamps are chronologically ordered (oldest at index 0)
-		while (timestamps.Count() > 0 && now - timestamps[0] > DEDUP_WINDOW)
-			timestamps.Remove(0);
+		while (entry.m_Timestamps.Count() > 0 && now - entry.m_Timestamps[0] > DEDUP_WINDOW)
+			entry.m_Timestamps.Remove(0);
 
-		if (timestamps.Count() >= MAX_DUPLICATES)
+		if (entry.m_Timestamps.Count() >= MAX_DUPLICATES)
 			return false;
 
-		timestamps.Insert(now);
+		entry.m_Timestamps.Insert(now);
 		return true;
 	}
 };

@@ -74,7 +74,13 @@ class ReplicatedBasicMap<Class TKey, Class TValue>
 
 	bool ReplaceKey(TKey old_key, TKey new_key)
 	{
-		return data.ReplaceKey(old_key, new_key);
+		if (old_key == new_key)
+			return true;
+		if (!data.Contains(old_key))
+			return false;
+		data.Set(new_key, data.Get(old_key));
+		data.Remove(old_key);
+		return true;
 	}
 
 	MapIterator Begin()

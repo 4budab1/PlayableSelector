@@ -8,7 +8,7 @@ modded class SCR_EditorManagerEntity
 		if (mode == EEditorMode.PHOTO)
 		{
 			PS_GameModeCoop gameModeCoop = PS_GameModeCoop.Cast(GetGame().GetGameMode());
-			if (gameModeCoop.IsArmaVisionDisabled())
+			if (gameModeCoop && gameModeCoop.IsArmaVisionDisabled())
 			{
 				SCR_EditorModeEntity editorModeEntity = super.CreateEditorMode(mode, isInit, prefab);
 				GetGame().GetCallqueue().Call(RemoveMode, editorModeEntity, false);

@@ -37,6 +37,9 @@ typedef func PS_PlayerFactionChangedCallback;
 void PS_VehicleInsertedCallback(RplId vehicleId);
 typedef func PS_VehicleInsertedCallback;
 
+void PS_SlotDamageStateChangedCallback(RplId slotId, EDamageState damageState);
+typedef func PS_SlotDamageStateChangedCallback;
+
 class PS_LobbyCallbackHandler : Managed
 {
 	ref ScriptInvokerBase<SCR_BaseGameMode_PlayerId> m_OnPlayerConnected = new ScriptInvokerBase<SCR_BaseGameMode_PlayerId>();
@@ -54,6 +57,7 @@ class PS_LobbyCallbackHandler : Managed
 	ref ScriptInvokerBase<PS_PlayerStateChangedCallback> m_OnPlayerStateChanged = new ScriptInvokerBase<PS_PlayerStateChangedCallback>();
 	ref ScriptInvokerBase<PS_PlayerFactionChangedCallback> m_OnPlayerFactionChanged = new ScriptInvokerBase<PS_PlayerFactionChangedCallback>();
 	ref ScriptInvokerBase<PS_VehicleInsertedCallback> m_OnVehicleInserted = new ScriptInvokerBase<PS_VehicleInsertedCallback>();
+	ref ScriptInvokerBase<PS_SlotDamageStateChangedCallback> m_OnSlotDamageStateChanged = new ScriptInvokerBase<PS_SlotDamageStateChangedCallback>();
 
 	ScriptInvokerBase<SCR_BaseGameMode_PlayerId> GetOnPlayerConnected()
 	{
@@ -128,5 +132,10 @@ class PS_LobbyCallbackHandler : Managed
 	ScriptInvokerBase<PS_VehicleInsertedCallback> GetOnVehicleInserted()
 	{
 		return m_OnVehicleInserted;
+	}
+
+	ScriptInvokerBase<PS_SlotDamageStateChangedCallback> GetOnSlotDamageStateChanged()
+	{
+		return m_OnSlotDamageStateChanged;
 	}
 };

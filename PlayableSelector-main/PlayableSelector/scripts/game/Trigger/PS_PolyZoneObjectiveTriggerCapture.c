@@ -112,11 +112,24 @@ class PS_PolyZoneObjectiveTriggerCapture : PS_PolyZoneObjectiveTrigger
 		}
 	}
 	
+	// Previous: broadcasted an RPC for every faction every frame — caused
+	// REPLICATION_FLOODED when multiple zones / factions were active.
+	// Now: only send the RPC when the timer actually changed (or at least
+	// one timer is non-zero), so we do not spam the reliable channel.
+	ref map<FactionKey, float> m_mFactionTimersPrev = new map<FactionKey, float>();
+
 	void UpdateFactionTimers()
 	{
 		foreach (FactionKey factionKey, float timer : m_mFactionTimers)
 		{
-			Rpc(RPC_UpdateFactionTimers, factionKey, timer);
+			float prevTimer;
+			if (!m_mFactionTimersPrev.Find(factionKey, prevTimer))
+				prevTimer = -1.0;
+			if (timer != prevTimer)
+			{
+				m_mFactionTimersPrev[factionKey] = timer;
+				Rpc(RPC_UpdateFactionTimers, factionKey, timer);
+			}
 		}
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]

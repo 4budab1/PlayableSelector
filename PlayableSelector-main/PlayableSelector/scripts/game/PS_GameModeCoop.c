@@ -57,10 +57,6 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	[Attribute("3", UIWidgets.EditBox, "Ready countdown in seconds before game auto-starts when all players are ready.", "", category: "Reforger Lobby")]
 	int m_iReadyCountdown;
 
-	[Attribute("", UIWidgets.Auto, "", category: "Reforger Lobby")]
-	protected ref array<ref PS_FactionRespawnCount> m_aFactionRespawnCount;
-	protected ref map<FactionKey, PS_FactionRespawnCount> m_mFactionRespawnCount = new map<FactionKey, PS_FactionRespawnCount>();
-
 	[Attribute("0", UIWidgets.CheckBox, "", category: "Reforger Lobby")]
 	protected bool m_bDisableVanillaGroupMenu;
 
@@ -117,6 +113,11 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	protected PS_PlayableManager m_playableManager;
 	protected PS_CutsceneManager m_CutsceneManager;
 
+	// Re-entrancy guard: tracks players already sent through the death-screen flow
+	// so HandlePlayerKilled (which can fire multiple times for the same death) doesn't
+	// double-trigger the death screen or spectator transition.
+	protected ref set<int> m_DeathScreenSent = new set<int>();
+
 	// ------------------------------------------ Events ------------------------------------------
 	
 	override void EOnInit(IEntity owner)
@@ -151,17 +152,6 @@ class PS_GameModeCoop : SCR_BaseGameMode
 
 		m_playableManager = PS_PlayableManager.GetInstance();
 		m_CutsceneManager = PS_CutsceneManager.GetInstance();
-
-		if (m_aFactionRespawnCount)
-		{
-			foreach (PS_FactionRespawnCount factionRespawnCount : m_aFactionRespawnCount)
-			{
-				m_mFactionRespawnCount.Insert(
-					factionRespawnCount.m_sFactionKey,
-					factionRespawnCount
-				);
-			}
-		}
 
 		if (Replication.IsServer())
 		{
@@ -560,21 +550,12 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		}
 	}
 
-	protected PS_FactionRespawnCount GetFactionRespawnCount(FactionKey factionKey)
-	{
-		if (m_mFactionRespawnCount.Contains(factionKey))
-		{
-			return m_mFactionRespawnCount[factionKey];
-		}
-		return null;
-	}
-
-  protected override void OnPlayerConnected(int playerId)
+	protected override void OnPlayerConnected(int playerId)
   {
     PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
     PlayerManager playerManager = GetGame().GetPlayerManager();
     string name = playerManager.GetPlayerName(playerId);
-    string guid = GetGame().GetBackendApi().GetPlayerIdentityId(playerId);
+    string guid = GetGame().GetBackendApi().GetPlayerPlatformId(playerId);
     playableManager.SetPlayerInfo(playerId, name, guid);
 
     SCR_EGameModeState currentState = GetState();
@@ -609,6 +590,52 @@ class PS_GameModeCoop : SCR_BaseGameMode
       PS_DebugLogger.LogImportant("OnPlayerConnected NEW_PLAYER player=" + playerId.ToString() + " gameModeState=" + typename.EnumToString(SCR_EGameModeState, currentState), playerId);
     }
 
+    // Clear death-screen guard so a reconnected player can die again in a new round.
+    m_DeathScreenSent.RemoveItem(playerId);
+
+    // JIP sync: send full state of non-RplProp maps to connecting client
+    playableManager.SyncStateToClient(playerId);
+
+    // JIP sync: send all VoN channel state to connecting client.
+    // This is needed because InitChannel RPCs are only sent once when rooms
+    // are created; a JIP client would otherwise never learn existing room names.
+    PS_VoNChannelsManager vonManager = PS_VoNChannelsManager.GetInstance();
+    if (vonManager)
+      vonManager.SyncChannelsToClient(playerId);
+
+    // Fix JIP voice room assignment: after channel sync, move the player to the
+    // correct room based on current game state. Without this, JIP players land in
+    // the default Global room even when the game is in BRIEFING or GAME.
+    if (vonManager && currentState == SCR_EGameModeState.BRIEFING)
+    {
+      RplId slotId = playableManager.GetPlayableByPlayer(playerId);
+      if (slotId != RplId.Invalid())
+      {
+        FactionKey fk = playableManager.GetPlayerFactionKey(playerId);
+        if (playableManager.IsPlayerTopSlotInGroup(playerId))
+          vonManager.MoveToRoom(playerId, fk, "#PS-VoNRoom_Command");
+        else
+        {
+          int groupCallsign = playableManager.GetGroupCallsignByPlayable(slotId);
+          vonManager.MoveToRoom(playerId, fk, groupCallsign.ToString());
+        }
+      }
+      else
+      {
+        vonManager.MoveToRoom(playerId, "", "#PS-VoNRoom_Global");
+      }
+    }
+    else if (vonManager && currentState == SCR_EGameModeState.GAME)
+    {
+      RplId slotId = playableManager.GetPlayableByPlayer(playerId);
+      if (slotId != RplId.Invalid())
+      {
+        FactionKey fk = playableManager.GetPlayerFactionKey(playerId);
+        int groupCallsign = playableManager.GetGroupCallsignByPlayable(slotId);
+        vonManager.MoveToRoom(playerId, fk, groupCallsign.ToString());
+      }
+    }
+
     if (currentState == SCR_EGameModeState.GAME)
     {
       PS_DebugLogger.LogImportant("OnPlayerConnected GAME state — scheduling SpawnInitialEntity", playerId);
@@ -630,72 +657,176 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	{
 		m_OnHandlePlayerKilled.Invoke(playerId, playerEntity, killerEntity, killer);
 
+		Print("[DS][SRV] HandlePlayerKilled FIRED player=" + playerId.ToString() + " state=" + typename.EnumToString(SCR_EGameModeState, GetState()) + " hasEntity=" + (playerEntity != null).ToString(), LogLevel.NORMAL);
+
+		// Re-entrancy guard: HandlePlayerKilled can fire multiple times per death (e.g.
+		// from multiple damage sources, or from the engine's repeated kill notifications).
+		// Once we have sent the death-screen flow, never send it again for the same player.
+		if (m_DeathScreenSent.Contains(playerId))
+		{
+			Print("[DS][SRV] HandlePlayerKilled REJECTED player=" + playerId.ToString() + " already in death-screen flow", LogLevel.WARNING);
+			return super.HandlePlayerKilled(playerId, playerEntity, killerEntity, killer);
+		}
+
+		// CoD-style death screen flow: when a player dies in GAME state, the server sends
+		// SwitchToDeathScreenServer() to the owning client. The client runs the 10s-eyes +
+		// 2s-fade + 8s-quote sequence locally, then chains to the normal spectator flow
+		// (PS_DeathScreenMenu.OnMenuClose → SwitchToObserver(null)).
+		//
+		// Other spectator transitions are NOT wrapped in the death screen:
+		//   - JIP without a slot → OnControlledEntityChanged → SwitchToObserverServer(null)
+		//   - Game start without a role → RPC_RequestDeployForAllPlayers → SwitchToObserverServer(null)
+		if (GetState() == SCR_EGameModeState.GAME && playerId > 0)
+		{
+			PS_PlayableManager pm = PS_PlayableManager.GetInstance();
+			RplId slotId = pm.GetPlayableByPlayer(playerId);
+			// Don't check IsSlotCharacterDestroyed here — HandlePlayerKilled fires before
+			// OnDamageStateChange(DESTROYED), so damage state may still be INCAPACITATED.
+			if (slotId != RplId.Invalid())
+			{
+				Print("[DS][SRV] HandlePlayerKilled slot=" + slotId.ToString() + " — sending death-screen RPC", LogLevel.NORMAL);
+				SCR_PlayerController playerController = SCR_PlayerController.Cast(GetGame().GetPlayerManager().GetPlayerController(playerId));
+				if (playerController)
+				{
+					PS_PlayableControllerComponent pcc = PS_PlayableControllerComponent.Cast(playerController.FindComponent(PS_PlayableControllerComponent));
+					if (pcc)
+					{
+						// Mark this player as processed so we never double-trigger
+						m_DeathScreenSent.Insert(playerId);
+
+						// Send death-screen RPC: client will run the CoD sequence and chain
+						// to SwitchToObserver(null) locally when the menu closes.
+						vector observerPos = "0 0 0";
+						if (playerEntity)
+							observerPos = playerEntity.GetOrigin();
+						Print("[DS][SRV] HandlePlayerKilled CALLING pcc.SwitchToDeathScreenServer observerPos=" + observerPos.ToString(), LogLevel.NORMAL);
+						pcc.SwitchToDeathScreenServer(observerPos);
+						// Deferred: spawn lobby entity 200ms later (matches Echo Lobby's SpawnDefaultEntity delay)
+						GetGame().GetCallqueue().CallLater(SpawnDefaultEntityForDeadPlayer, 200, false, playerId);
+					}
+					else
+					{
+						Print("[DS][SRV] HandlePlayerKilled ABORT pcc NULL", LogLevel.WARNING);
+					}
+				}
+				else
+				{
+					Print("[DS][SRV] HandlePlayerKilled ABORT playerController NULL", LogLevel.WARNING);
+				}
+			}
+			else
+			{
+				Print("[DS][SRV] HandlePlayerKilled ABORT slot INVALID — bypassing death screen", LogLevel.WARNING);
+			}
+		}
+		else
+		{
+			Print("[DS][SRV] HandlePlayerKilled SKIP state=" + typename.EnumToString(SCR_EGameModeState, GetState()) + " playerId=" + playerId.ToString(), LogLevel.WARNING);
+		}
+
 		return super.HandlePlayerKilled(playerId, playerEntity, killerEntity, killer);
 	}
 
-	protected override void OnPlayerDisconnected(int playerId, KickCauseCode cause, int timeout)
+	// Deferred entity spawn for dead players (Echo Lobby pattern — 200ms delay)
+	void SpawnDefaultEntityForDeadPlayer(int playerId)
 	{
-		PlayerManager playerManager = GetGame().GetPlayerManager();
-		SCR_PlayerController playerController = SCR_PlayerController.Cast(playerManager.GetPlayerController(playerId));
-
-		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
-		playableManager.SetPlayerState(playerId, PS_EPlayableControllerState.Disconnected);
-
-		PS_DebugLogger.LogImportant("OnPlayerDisconnected player=" + playerId.ToString() + " gameModeState=" + typename.EnumToString(SCR_EGameModeState, GetState()), playerId);
-
-		string guid = playableManager.GetPlayerGUIDById(playerId);
-		RplId controlledSlot;
-		if (playableManager.FindPlayerSlotById(playerId, controlledSlot))
+		SCR_PlayerController playerController = SCR_PlayerController.Cast(GetGame().GetPlayerManager().GetPlayerController(playerId));
+		if (!playerController)
+			return;
+		PS_PlayableControllerComponent pcc = PS_PlayableControllerComponent.Cast(playerController.FindComponent(PS_PlayableControllerComponent));
+		if (!pcc)
+			return;
+		IEntity initialEntity = pcc.GetInitialEntity();
+		if (!initialEntity)
 		{
-			PS_DebugLogger.LogImportant("OnPlayerDisconnected player=" + playerId.ToString() + " had slot=" + controlledSlot.ToString() + " scheduling RemoveDisconnectedPlayer in " + m_iReconnectTime.ToString() + "ms", playerId);
-			RplComponent rpl = RplComponent.Cast(Replication.FindItem(controlledSlot));
-			if (rpl)
-				rpl.GiveExt(RplIdentity.Local(), false);
-			playableManager.AddDisconnectedPlayerInfo(guid, controlledSlot, playerId);
-			if (GetState() != SCR_EGameModeState.GAME)
-				GetGame().GetCallqueue().CallLater(RemoveDisconnectedPlayer, m_iReconnectTime, false, playerId);
-			else
-				PS_DebugLogger.LogImportant("OnPlayerDisconnected GAME state — NOT scheduling RemoveDisconnectedPlayer (m_iReconnectTimeAfterBriefing applies)", playerId);
+			Resource resource = Resource.Load("{ADDE38E4119816AB}Prefabs/InitialPlayer_Version2.et");
+			EntitySpawnParams params = new EntitySpawnParams();
+			initialEntity = GetGame().SpawnEntityPrefab(resource, GetGame().GetWorld(), params);
+			pcc.SetInitialEntity(initialEntity);
 		}
-		else
-		{
-			PS_DebugLogger.LogImportant("OnPlayerDisconnected player=" + playerId.ToString() + " had NO slot, removing directly", playerId);
-			playableManager.RemovePlayer(playerId, guid, true);
-		}
-
-		IEntity controlledEntity;
-		if (playerController)
-			controlledEntity = playerController.GetControlledEntity();
-		else
-			controlledEntity = null;
-
-		if (controlledEntity)
-		{
-			if (GetGame().GetPlayerManager().IsPlayerConnected(playerId))
-			{
-				PS_DebugLogger.LogImportant("OnPlayerDisconnected player=" + playerId.ToString() + " reconnected before authority reset, skipping", playerId);
-			}
-	else
-		{
-			CharacterControllerComponent charController = CharacterControllerComponent.Cast(controlledEntity.FindComponent(CharacterControllerComponent));
-			if (charController)
-				charController.SetMovement(0, vector.Forward);
-			RplComponent rpl = RplComponent.Cast(controlledEntity.FindComponent(RplComponent));
-			if (rpl)
-				rpl.GiveExt(RplIdentity.Local(), false);
-		}
-		}
-
-		SCR_GroupsManagerComponent groupsManagerComponent = SCR_GroupsManagerComponent.GetInstance();
-		if (groupsManagerComponent)
-		{
-			SCR_AIGroup playerGroup = groupsManagerComponent.GetPlayerGroup(playerId);
-			if (playerGroup)
-				playerGroup.RemovePlayer(playerId);
-		}
-
-		SCR_BaseGameMode.DisconnectPlayerBase(this, playerId, cause, timeout, controlledEntity);
+		playerController.SetInitialMainEntity(initialEntity);
 	}
+
+  protected override void OnPlayerDisconnected(int playerId, KickCauseCode cause, int timeout)
+  {
+    PlayerManager playerManager = GetGame().GetPlayerManager();
+    SCR_PlayerController playerController = SCR_PlayerController.Cast(playerManager.GetPlayerController(playerId));
+
+    PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
+    playableManager.SetPlayerState(playerId, PS_EPlayableControllerState.Disconnected);
+
+    // Clean up VoN channel key map so disconnected players don't leave ghost entries
+    PS_VoNChannelsManager vonManager = PS_VoNChannelsManager.GetInstance();
+    if (vonManager)
+      vonManager.OnPlayerDisconnected(playerId, cause, timeout);
+
+    PS_DebugLogger.LogImportant("OnPlayerDisconnected player=" + playerId.ToString() + " gameModeState=" + typename.EnumToString(SCR_EGameModeState, GetState()), playerId);
+
+    string guid = playableManager.GetPlayerGUIDById(playerId);
+    RplId controlledSlot;
+    if (playableManager.FindPlayerSlotById(playerId, controlledSlot))
+    {
+      PS_DebugLogger.LogImportant("OnPlayerDisconnected player=" + playerId.ToString() + " had slot=" + controlledSlot.ToString() + " scheduling RemoveDisconnectedPlayer in " + m_iReconnectTime.ToString() + "ms", playerId);
+      RplComponent rpl = RplComponent.Cast(Replication.FindItem(controlledSlot));
+      if (rpl)
+        rpl.GiveExt(RplIdentity.Local(), false);
+      playableManager.AddDisconnectedPlayerInfo(guid, controlledSlot, playerId);
+      if (GetState() != SCR_EGameModeState.GAME)
+        GetGame().GetCallqueue().CallLater(RemoveDisconnectedPlayer, m_iReconnectTime, false, playerId);
+      else
+      {
+        // In GAME state, use m_iReconnectTimeAfterBriefing. -1 means reserve forever.
+        if (m_iReconnectTimeAfterBriefing >= 0)
+        {
+          PS_DebugLogger.LogImportant("OnPlayerDisconnected GAME state — scheduling RemoveDisconnectedPlayer in " + m_iReconnectTimeAfterBriefing.ToString() + "ms", playerId);
+          GetGame().GetCallqueue().CallLater(RemoveDisconnectedPlayer, m_iReconnectTimeAfterBriefing, false, playerId);
+        }
+        else
+        {
+          PS_DebugLogger.LogImportant("OnPlayerDisconnected GAME state — NOT scheduling RemoveDisconnectedPlayer (m_iReconnectTimeAfterBriefing=-1, infinite)", playerId);
+        }
+      }
+    }
+    else
+    {
+      PS_DebugLogger.LogImportant("OnPlayerDisconnected player=" + playerId.ToString() + " had NO slot, removing directly", playerId);
+      playableManager.RemovePlayer(playerId, guid, true);
+    }
+
+    IEntity controlledEntity;
+    if (playerController)
+      controlledEntity = playerController.GetControlledEntity();
+    else
+      controlledEntity = null;
+
+    if (controlledEntity)
+    {
+      if (GetGame().GetPlayerManager().IsPlayerConnected(playerId))
+      {
+        PS_DebugLogger.LogImportant("OnPlayerDisconnected player=" + playerId.ToString() + " reconnected before authority reset, skipping", playerId);
+      }
+      else
+      {
+        CharacterControllerComponent charController = CharacterControllerComponent.Cast(controlledEntity.FindComponent(CharacterControllerComponent));
+        if (charController)
+          charController.SetMovement(0, vector.Forward);
+        RplComponent rpl = RplComponent.Cast(controlledEntity.FindComponent(RplComponent));
+        if (rpl)
+          rpl.GiveExt(RplIdentity.Local(), false);
+      }
+    }
+
+    SCR_GroupsManagerComponent groupsManagerComponent = SCR_GroupsManagerComponent.GetInstance();
+    if (groupsManagerComponent)
+    {
+      SCR_AIGroup playerGroup = groupsManagerComponent.GetPlayerGroup(playerId);
+      if (playerGroup)
+        playerGroup.RemovePlayer(playerId);
+    }
+
+    // Call base class cleanup (entity deletion, replication cleanup, etc.)
+    super.OnPlayerDisconnected(playerId, cause, timeout);
+  }
 
 	// ------------------------------------------ Faction Balance ------------------------------------------
 	bool CanJoinFaction(FactionKey factionKeyPlayer, FactionKey currentFaction)
@@ -841,81 +972,6 @@ class PS_GameModeCoop : SCR_BaseGameMode
       VoNChannelsManager.RestoreRoom(playerId);
   }
 
-	void TryRespawn(RplId playableId, int playerId)
-	{
-		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
-		if (playableManager && playableId != RplId.Invalid() && playableManager.GetPlayableById(playableId))
-		{
-			PS_PlayableComponent playableComponent = playableManager.GetPlayableById(playableId).GetPlayableComponent();
-			if (!playableComponent)
-				return;
-
-			FactionAffiliationComponent factionAffiliationComponent = playableComponent.GetFactionAffiliationComponent();
-			Faction faction = factionAffiliationComponent.GetDefaultAffiliatedFaction();
-			FactionKey factionKey = faction.GetFactionKey();
-			PS_FactionRespawnCount factionRespawns = GetFactionRespawnCount(factionKey);
-			if (!factionRespawns || factionRespawns.m_iCount == 0)
-			{
-				SwitchToInitialEntity(playerId);
-				return;
-			}
-			ResourceName prefabToSpawn = playableComponent.GetNextRespawn(factionRespawns.m_iCount == -1);
-			if (factionRespawns.m_iCount > 0)
-				factionRespawns.m_iCount--;
-			if (prefabToSpawn != "")
-			{
-				int time = factionRespawns.m_iTime;
-				if (factionRespawns.m_bWaveMode)
-					time = factionRespawns.m_iTime - Math.Mod(GetGame().GetWorld().GetWorldTime(), time);
-				if (playerId > 0)
-					playableComponent.OpenRespawnMenu(time);
-
-				PS_RespawnData respawnData = new PS_RespawnData(playableComponent, prefabToSpawn);
-				GetGame().GetCallqueue().CallLater(Respawn, time, false, playerId, respawnData);
-				return;
-			}
-		}
-
-		SwitchToInitialEntity(playerId);
-	}
-
-	void Respawn(int playerId, PS_RespawnData respawnData)
-	{
-		Resource resource = Resource.Load(respawnData.m_sPrefabName);
-		EntitySpawnParams params = new EntitySpawnParams();
-		Math3D.MatrixCopy(respawnData.m_aSpawnTransform, params.Transform);
-		IEntity entity = GetGame().SpawnEntityPrefab(resource, GetGame().GetWorld(), params);
-		SCR_AIGroup aiGroup = m_playableManager.GetPlayerGroupByPlayable(respawnData.m_Id);
-		SCR_AIGroup playableGroup = aiGroup.GetSlave();
-		playableGroup.AddAIEntityToGroup(entity);
-
-		PS_PlayableComponent playableComponentNew = PS_PlayableComponent.Cast(entity.FindComponent(PS_PlayableComponent));
-		playableComponentNew.SetPlayable(true);
-
-		GetGame().GetCallqueue().Call(SwitchToSpawnedEntity, playerId, respawnData, entity, 4);
-	}
-
-	void SwitchToSpawnedEntity(int playerId, PS_RespawnData respawnData, IEntity entity, int frameCounter)
-	{
-		if (frameCounter > 0) // Await four frames
-		{
-			GetGame().GetCallqueue().Call(SwitchToSpawnedEntity, playerId, respawnData, entity, frameCounter - 1);
-			return;
-		}
-
-		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
-
-		PS_PlayableComponent playableComponent = PS_PlayableComponent.Cast(entity.FindComponent(PS_PlayableComponent));
-		RplId playableId = playableComponent.GetRplId();
-
-		playableComponent.CopyState(respawnData);
-		if (playerId > 0)
-		{
-			playableManager.SetPlayerToSlot(playableId, playerId);
-			playableManager.ForceSwitch(playerId);
-		}
-	}
-
   void SwitchToInitialEntity(int playerId)
   {
     if (playerId <= 0)
@@ -951,6 +1007,11 @@ class PS_GameModeCoop : SCR_BaseGameMode
     SCR_EGameModeState state = GetState();
     PS_DebugLogger.LogImportant("OnGameStateChanged state=" + typename.EnumToString(SCR_EGameModeState, state) + " isServer=" + Replication.IsServer().ToString() + " freezeTimeLeft=" + m_fCurrentFreezeTime.ToString());
 
+    // Clear death-screen tracking when game state changes (new round) so players
+    // who died in the previous round can receive the death screen again.
+    if (Replication.IsServer())
+      m_DeathScreenSent.Clear();
+
 		PS_VoNChannelsManager VoNChannelsManager = PS_VoNChannelsManager.GetInstance();
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 		array<int> playerIds = new array<int>();
@@ -966,11 +1027,25 @@ class PS_GameModeCoop : SCR_BaseGameMode
       FactionKey fKey = playableManager.GetPlayerFactionKey(pid);
       PS_DebugLogger.LogImportant("OnGameStateChanged player=" + pid.ToString() + " slot=" + slotId.ToString() + " state=" + typename.EnumToString(PS_EPlayableControllerState, pState) + " faction=" + fKey, pid);
     }
-
     m_OnGameStateChange.Invoke(state);
 		switch (state)
 		{
+	case SCR_EGameModeState.PREGAME:
+		// BUGFIX: pre-create all faction and group VoN rooms in PREGAME so that
+		// players in the initial lobby phase (before SLOTSELECTION) can see every
+		// squad channel immediately. Without this, GetAllGroupRooms returns empty
+		// in PREGAME because EnsureAllFactionAndGroupRoomsExist was only called
+		// for SLOTSELECTION and BRIEFING transitions.
+		EnsureAllFactionAndGroupRoomsExist();
+		break;
 	case SCR_EGameModeState.SLOTSELECTION:
+		// BUGFIX: pre-create all faction and group VoN rooms on transition to
+		// SLOTSELECTION (lobby) so clients can see every group channel in the
+		// lobby UI even before any player is assigned to a slot. Previously the
+		// group rooms were only created when a player was moved to them via
+		// MoveToRoom, so the client got roomId=-1 placeholders that CreateRoom
+		// filtered out — the "i don't see other group channels in lobby" bug.
+		EnsureAllFactionAndGroupRoomsExist();
 		if (VoNChannelsManager)
 		{
 			foreach (int playerId : playerIds)
@@ -983,50 +1058,13 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		}
 		break;
 	case SCR_EGameModeState.BRIEFING:
+		// BUGFIX: same as SLOTSELECTION — pre-create ALL group rooms (not just
+		// the ones with players) so the briefing UI shows every same-faction
+		// group channel, even empty ones. Fixes the "i don't see faction group
+		// channels in briefing" bug.
+		EnsureAllFactionAndGroupRoomsExist();
 		if (VoNChannelsManager)
-		{
-			// Collect factions with players and squads with players
-			map<FactionKey, bool> factionsWithPlayers = new map<FactionKey, bool>();
-			map<FactionKey, ref map<int, bool>> squadsWithPlayers = new map<FactionKey, ref map<int, bool>>();
-			foreach (int pid : playerIds)
-			{
-				RplId sid;
-				if (playableManager.FindPlayerSlotById(pid, sid) && sid != RplId.Invalid())
-				{
-					FactionKey fk = playableManager.GetPlayerFactionKey(pid);
-					if (fk == "") continue;
-					factionsWithPlayers[fk] = true;
-					int groupId = playableManager.GetSlotGroupId(sid);
-					if (!squadsWithPlayers.Contains(fk))
-						squadsWithPlayers[fk] = new map<int, bool>();
-					squadsWithPlayers[fk][groupId] = true;
-				}
-			}
-
-			foreach (FactionKey fk, bool _ : factionsWithPlayers)
-			{
-				VoNChannelsManager.GetOrCreateRoomWithFaction(fk, "#PS-VoNRoom_Faction");
-				VoNChannelsManager.GetOrCreateRoomWithFaction(fk, "#PS-VoNRoom_Command");
-			}
-
-			foreach (FactionKey fk, map<int, bool> groups : squadsWithPlayers)
-			{
-				foreach (int groupId, bool __ : groups)
-				{
-					int groupCallSign = -1;
-					foreach (RplId sId : playableManager.GetSortedSlotIds())
-					{
-						if (playableManager.GetSlotGroupId(sId) == groupId)
-						{
-							groupCallSign = playableManager.GetGroupCallsignByPlayable(sId);
-							break;
-						}
-					}
-					if (groupCallSign >= 0)
-						VoNChannelsManager.GetOrCreateRoomWithFaction(fk, groupCallSign.ToString());
-				}
-			}
-		}
+			VoNChannelsManager.DumpVoNState("BRIEFING_transition");
 		foreach (int playerId : playerIds)
 		{
 			RplId slotId;
@@ -1057,6 +1095,8 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		}
 		if (m_bHolsterWeapon)
 			playableManager.HolsterWeapons();
+		if (VoNChannelsManager)
+			VoNChannelsManager.DumpVoNState("BRIEFING_post_assignment");
 		break;
 			case SCR_EGameModeState.GAME:
 				// VoN rooms are already set up from BRIEFING — players stay in their squad/command channels
@@ -1071,6 +1111,85 @@ class PS_GameModeCoop : SCR_BaseGameMode
 				GetGame().GetCallqueue().Remove(DumpPlayableEntityState);
 				break;
 		}
+	}
+
+	// BUGFIX: Pre-create every faction and group VoN room on the server so
+	// clients can see the full group structure in lobby and briefing UIs even
+	// before any player is assigned to a slot. Without this, the client calls
+	// GetOrCreateRoomWithFaction and gets a roomId=-1 placeholder (since the
+	// room doesn't exist server-side yet), and CreateRoom filters out the
+	// placeholder — resulting in the "group channels not showing" bug.
+	// Iterates ALL playables (not just ones with players) so empty groups are
+	// also visible. Idempotent: GetOrCreateRoomWithFaction returns the existing
+	// roomId if the room already exists, so calling this on every state
+	// transition is safe.
+	void EnsureAllFactionAndGroupRoomsExist()
+	{
+		if (!Replication.IsServer())
+			return;
+
+		PS_VoNChannelsManager VoNChannelsManager = PS_VoNChannelsManager.GetInstance();
+		if (!VoNChannelsManager)
+			return;
+
+		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
+		if (!playableManager)
+			return;
+
+		// Two passes:
+		//   Pass 1: collect every unique factionKey and create its Faction/Command
+		//   rooms. This is NOT gated on groupCallSign validity — a faction with
+		//   only unassigned playables (groupCallSign < 0) still needs its
+		//   Faction/Command rooms created so the BRIEFING UI can show them to
+		//   players in that faction.
+		//   Pass 2: for playables with a valid groupCallSign, create the per-group
+		//   room. Deduped by (factionKey, groupCallSign) so playables in the same
+		//   group don't trigger redundant room-creation calls.
+		// NOTE: Using `map<string, bool>` instead of `set<string>` because
+		// Enfusion Script's `set<T>` template appears to be limited to primitive
+		// int keys (no `set<string>` examples exist in this file or its
+		// dependencies). `map<string, bool>` is the idiomatic dedup pattern used
+		// elsewhere in this file (see `CanJoinFaction` at line 850).
+		map<string, bool> seenFactions = new map<string, bool>();
+		map<string, bool> seenGroups = new map<string, bool>();
+		array<PS_PlayableContainer> playables = playableManager.GetPlayablesSorted();
+		// BUGFIX: use `for` for C-style indexed loops. Enfusion Script's `foreach`
+		// is range-based only (requires `foreach (var : collection)` syntax with
+		// a `:`). Using `foreach` with `(int i = 0; ...)` produced the parser
+		// error "Expected ':', not a '='" because the parser was looking for the
+		// range-based foreach delimiter.
+		for (int i = 0; i < playables.Count(); i++)
+		{
+			PS_PlayableContainer playable = playables[i];
+			if (!playable)
+				continue;
+			// RplId may be Invalid during teardown/replication handoff — skip
+			// those to avoid NRE in GetGroupCallsignByPlayable.
+			if (playable.GetRplId() == RplId.Invalid())
+				continue;
+			FactionKey fk = playable.GetFactionKey();
+			if (fk == "")
+				continue;
+
+			// Pass 1: Faction/Command rooms for every unique faction
+			if (!seenFactions.Contains(fk))
+			{
+				seenFactions[fk] = true;
+				VoNChannelsManager.GetOrCreateRoomWithFaction(fk, "#PS-VoNRoom_Faction");
+				VoNChannelsManager.GetOrCreateRoomWithFaction(fk, "#PS-VoNRoom_Command");
+			}
+
+			// Pass 2: per-group room (only for playables with a valid group)
+			int groupCallSign = playableManager.GetGroupCallsignByPlayable(playable.GetRplId());
+			if (groupCallSign <= 0)
+				continue;
+			string dedupKey = fk + "|" + groupCallSign.ToString();
+			if (seenGroups.Contains(dedupKey))
+				continue;
+			seenGroups[dedupKey] = true;
+			VoNChannelsManager.GetOrCreateRoomWithFaction(fk, groupCallSign.ToString());
+		}
+		PS_DebugLogger.LogImportant("EnsureAllFactionAndGroupRoomsExist created/verified " + seenFactions.Count().ToString() + " faction rooms + " + seenGroups.Count().ToString() + " group rooms");
 	}
 
 	void DumpPlayableEntityState()
@@ -1508,17 +1627,4 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	{
 		m_bTeamSwitch = canOpenLobbyInGame;
 	}
-}
-
-[BaseContainerProps()]
-class PS_FactionRespawnCount
-{
-	[Attribute()]
-	FactionKey m_sFactionKey;
-	[Attribute()]
-	int m_iCount;
-	[Attribute()]
-	int m_iTime;
-	[Attribute()]
-	bool m_bWaveMode;
 }

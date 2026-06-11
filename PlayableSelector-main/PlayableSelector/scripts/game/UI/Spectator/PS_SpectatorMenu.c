@@ -48,6 +48,8 @@ class PS_SpectatorMenu: MenuBase
 	
 	protected PS_SpectatorLabelIcon m_SelectedLabel;
 	protected vector m_vSelectedPosition;
+	protected float m_fLastIconsUpdate = 0;
+	static const float ICONS_UPDATE_INTERVAL_MS = 100;
 	
 	static void ResetTarget()
 	{
@@ -89,120 +91,155 @@ class PS_SpectatorMenu: MenuBase
 		return null;
 	}
 
-	bool SetCameraCharacter(RplId rplId)
+	// Bind camera to entity. If entity isn't replicated (camera too far away), optionally
+	// ask the server for the entity's position via RPC, teleport there, and retry.
+	// useRpcFallback=false: only try Replication.FindItem — used by the auto-find loop
+	//   so it doesn't consume the RPC cooldown and block manual clicks.
+	// useRpcFallback=true: manual player click — full flow with server position request.
+	bool SetCameraCharacter(RplId rplId, bool useRpcFallback = true)
 	{
-		return SetCameraCharacterRetry(rplId, 0);
+		PS_DebugLogger.LogImportant("Spectator SetCameraCharacter START rplId=" + rplId.ToString() + " rpcFallback=" + useRpcFallback.ToString());
+
+		// Friendlies-only check — must come first to avoid leaking enemy positions.
+		if (m_GameMode && m_GameMode.GetFriendliesSpectatorOnly())
+		{
+			PlayerController spectatorController = GetGame().GetPlayerController();
+			if (!spectatorController || !m_PlayableManager)
+			{
+				PS_DebugLogger.LogError("Spectator SetCameraCharacter FACTION_CHECK_FAIL_NULL_CTX rplId=" + rplId.ToString());
+				return false;
+			}
+			int spectatorId = spectatorController.GetPlayerId();
+			PS_PlayableContainer playableContainer = m_PlayableManager.GetPlayableById(rplId);
+			if (!playableContainer)
+			{
+				PS_DebugLogger.LogError("Spectator SetCameraCharacter FACTION_CHECK_FAIL_NULL_CONTAINER rplId=" + rplId.ToString());
+				return false;
+			}
+			FactionKey playableFactionKey = playableContainer.GetFactionKey();
+			FactionKey lastPlayerFaction = m_PlayableManager.GetPlayerFactionKeyRemembered(spectatorId);
+			if (playableFactionKey != lastPlayerFaction)
+			{
+				PS_DebugLogger.LogImportant("Spectator SetCameraCharacter FACTION_BLOCKED rplId=" + rplId.ToString() + " targetFaction=" + playableFactionKey + " spectatorFaction=" + lastPlayerFaction);
+				return false;
+			}
+		}
+
+		// Step 1: Try to find the entity directly via replication.
+		RplComponent rplComponent = RplComponent.Cast(Replication.FindItem(rplId));
+		if (rplComponent)
+		{
+			IEntity characterEntity = rplComponent.GetEntity();
+			if (characterEntity)
+			{
+				PS_DebugLogger.LogImportant("Spectator SetCameraCharacter ENTITY_FOUND via Replication.FindItem rplId=" + rplId.ToString());
+				PS_ManualCameraSpectator camera = PS_ManualCameraSpectator.Cast(GetGame().GetCameraManager().CurrentCamera());
+				if (camera)
+				{
+					if (m_GameMode && m_GameMode.GetFriendliesSpectatorOnly())
+						camera.SetCharacterEntityMove(characterEntity);
+					else
+						camera.SetCharacterEntity(characterEntity);
+				}
+				return true;
+			}
+		}
+
+		// Step 2: Entity not replicated. If RPC fallback is disabled (auto-find loop),
+		// just return false so the loop tries the next playable. Only manual clicks
+		// (useRpcFallback=true) trigger the server position request.
+		if (!useRpcFallback)
+		{
+			PS_DebugLogger.Log("Spectator SetCameraCharacter SKIP_RPC_FALLBACK rplId=" + rplId.ToString() + " (auto-find loop, not replicated yet)");
+			return false;
+		}
+
+		PS_DebugLogger.LogImportant("Spectator SetCameraCharacter REPLICATION_MISS rplId=" + rplId.ToString() + " requesting server position...");
+
+		m_rPendingCameraRplId = rplId;
+		PS_PlayableControllerComponent pcc = PS_PlayableManager.GetPlayableController();
+		if (pcc)
+			pcc.RequestEntityPosition(rplId);
+		else
+			PS_DebugLogger.LogError("Spectator SetCameraCharacter FAIL: no playable controller rplId=" + rplId.ToString());
+		return true; // camera binding will happen via OnEntityPositionReceived callback
 	}
 
-	bool SetCameraCharacterRetry(RplId rplId, int attempt)
+	// Pending camera RplId — set by SetCameraCharacter when waiting for server reply.
+	protected RplId m_rPendingCameraRplId = RplId.Invalid();
+
+	// Callback: server has replied with the entity position (via PS_PlayableControllerComponent
+	// RPC_ReceiveEntityPosition which calls this through s_SpectatorMenu static ref).
+	// Teleport camera there, then schedule a retry to bind once the entity replicates.
+	void OnEntityPositionReceived(RplId rplId, vector pos, bool found)
 	{
-		PS_DebugLogger.LogImportant("Spectator SetCameraCharacter rplId=" + rplId.ToString() + " attempt=" + attempt.ToString());
-		IEntity characterEntity;
+		// Guard against engine shutdown where GetGame() returns null
+		if (!GetGame())
+			return;
+
+		if (rplId != m_rPendingCameraRplId)
+		{
+			PS_DebugLogger.Log("Spectator OnEntityPositionReceived SKIP: rplId mismatch got=" + rplId.ToString() + " expected=" + m_rPendingCameraRplId.ToString());
+			return;
+		}
+		m_rPendingCameraRplId = RplId.Invalid();
+
+		if (!found || pos == "0 0 0")
+		{
+			PS_DebugLogger.LogError("Spectator OnEntityPositionReceived FAIL: entity not found on server rplId=" + rplId.ToString());
+			return;
+		}
+
+		PS_DebugLogger.LogImportant("Spectator OnEntityPositionReceived TELEPORT rplId=" + rplId.ToString() + " pos=" + pos.ToString());
+
+		// Teleport camera to the entity's position (slightly above it).
+		PS_ManualCameraSpectator camera = PS_ManualCameraSpectator.Cast(GetGame().GetCameraManager().CurrentCamera());
+		if (!camera)
+			return;
+
+		vector mat[4];
+		camera.GetTransform(mat);
+		mat[3] = pos + "0 5 0"; // 5m above the entity
+		camera.SetTransform(mat);
+		camera.SetCharacterEntity(null); // detach from any previous entity
+
+		// Schedule retry: entity should replicate within ~500ms now that camera is nearby.
+		PS_DebugLogger.LogImportant("Spectator SetCameraCharacter scheduling retry for rplId=" + rplId.ToString());
+		GetGame().GetCallqueue().CallLater(DoRetrySetCameraCharacter, 500, false, rplId);
+	}
+
+	// Retry binding camera to entity after teleporting near it.
+	// Called every 500ms until the entity replicates (or 10 attempts, ~5s).
+	void DoRetrySetCameraCharacter(RplId rplId, int attempt = 0)
+	{
+		PS_DebugLogger.LogImportant("Spectator DoRetrySetCameraCharacter attempt=" + attempt.ToString() + " rplId=" + rplId.ToString());
 
 		RplComponent rplComponent = RplComponent.Cast(Replication.FindItem(rplId));
 		if (rplComponent)
 		{
-			characterEntity = rplComponent.GetEntity();
-			PS_DebugLogger.LogImportant("Spectator SetCameraCharacter found via Replication.FindItem");
+			IEntity characterEntity = rplComponent.GetEntity();
+			if (characterEntity)
+			{
+				PS_DebugLogger.LogImportant("Spectator DoRetrySetCameraCharacter SUCCESS rplId=" + rplId.ToString() + " entity replicated, binding camera");
+				PS_ManualCameraSpectator camera = PS_ManualCameraSpectator.Cast(GetGame().GetCameraManager().CurrentCamera());
+				if (camera && m_GameMode)
+				{
+					if (m_GameMode.GetFriendliesSpectatorOnly())
+						camera.SetCharacterEntityMove(characterEntity);
+					else
+						camera.SetCharacterEntity(characterEntity);
+				}
+				return;
+			}
 		}
-		else
+
+		if (attempt >= 10)
 		{
-			PS_DebugLogger.LogImportant("Spectator SetCameraCharacter Replication.FindItem failed, trying validated lookup");
-			IEntity validatedEntity;
-			if (m_PlayableManager.FindValidatedSlotEntity(rplId, validatedEntity))
-			{
-				PS_DebugLogger.LogImportant("Spectator SetCameraCharacter found entity via validated cache rplId=" + rplId.ToString());
-				characterEntity = validatedEntity;
-			}
-			else
-			{
-				PS_DebugLogger.LogImportant("Spectator SetCameraCharacter trying player controller fallback");
-				int targetPlayerId = m_PlayableManager.GetPlayerByPlayable(rplId);
-				if (targetPlayerId > 0)
-				{
-					IEntity controlledEntity = GetGame().GetPlayerManager().GetPlayerControlledEntity(targetPlayerId);
-					if (controlledEntity)
-					{
-						SCR_ChimeraCharacter chimChar = SCR_ChimeraCharacter.Cast(controlledEntity);
-						vector pos = controlledEntity.GetOrigin();
-						bool atOrigin = pos[0] == 0 && pos[1] == 0 && pos[2] == 0;
-						if (chimChar && !atOrigin)
-						{
-							PS_DebugLogger.LogImportant("Spectator SetCameraCharacter found entity via player controller pid=" + targetPlayerId.ToString() + " pos=" + pos.ToString());
-							characterEntity = controlledEntity;
-						}
-						else
-						{
-							PS_DebugLogger.LogImportant("Spectator SetCameraCharacter player controller entity rejected: hasChar=" + (chimChar != null).ToString() + " atOrigin=" + atOrigin.ToString() + " pos=" + pos.ToString());
-						}
-					}
-				}
-				
-				if (!characterEntity && targetPlayerId > 0)
-				{
-					// Last resort: try to find entity via spectator labels, matched by player ID
-					PS_DebugLogger.LogImportant("Spectator SetCameraCharacter trying spectator label lookup pid=" + targetPlayerId.ToString());
-					PS_SpectatorLabelsManager labelMgr = PS_SpectatorLabelsManager.GetInstance();
-					if (labelMgr)
-					{
-						int labelCount = labelMgr.m_aSpectatorLabels.Count();
-						PS_DebugLogger.LogImportant("Spectator SetCameraCharacter labelMgr found, labels=" + labelCount.ToString());
-						foreach (PS_SpectatorLabel label : labelMgr.m_aSpectatorLabels)
-						{
-							IEntity owner = label.GetOwner();
-							if (!owner)
-								continue;
-							PS_PlayableComponent playComp = PS_PlayableComponent.Cast(owner.FindComponent(PS_PlayableComponent));
-							if (playComp)
-							{
-								int labelPlayerId = m_PlayableManager.GetPlayerByPlayable(playComp.GetRplId());
-								PS_DebugLogger.LogImportant("Spectator SetCameraCharacter label check: entityRplId=" + playComp.GetRplId().ToString() + " labelPlayerId=" + labelPlayerId.ToString() + " targetPid=" + targetPlayerId.ToString());
-								if (labelPlayerId == targetPlayerId)
-								{
-									PS_DebugLogger.LogImportant("Spectator SetCameraCharacter found via spectator label for pid=" + targetPlayerId.ToString() + " entityRplId=" + playComp.GetRplId().ToString());
-									characterEntity = owner;
-									break;
-								}
-							}
-						}
-					}
-				}
-			}
-			if (!characterEntity)
-			{
-				if (attempt < 30)
-				{
-					PS_DebugLogger.LogImportant("Spectator SetCameraCharacter retrying rplId=" + rplId.ToString() + " attempt=" + attempt.ToString());
-					GetGame().GetCallqueue().CallLater(SetCameraCharacterRetry, 1000, false, rplId, attempt + 1);
-					return false;
-				}
-				PS_DebugLogger.LogError("Spectator SetCameraCharacter FAIL: no entity for rplId=" + rplId.ToString());
-				return false;
-			}
+			PS_DebugLogger.LogError("Spectator DoRetrySetCameraCharacter GAVE UP after 10 attempts rplId=" + rplId.ToString());
+			return;
 		}
-		if (m_GameMode.GetFriendliesSpectatorOnly())
-		{
-			int spectatorId = GetGame().GetPlayerController().GetPlayerId();
-			RplId spectatorSlot = m_PlayableManager.GetPlayableByPlayer(spectatorId);
-			if (spectatorSlot != RplId.Invalid())
-			{
-				PS_PlayableContainer playableContainer = m_PlayableManager.GetPlayableById(rplId);
-				FactionKey playableFactionKey = playableContainer.GetFactionKey();
-				FactionKey lastPlayerFaction = m_PlayableManager.GetPlayerFactionKeyRemembered(spectatorId);
-				if (playableFactionKey != lastPlayerFaction)
-				{
-					PS_DebugLogger.LogImportant("Spectator SetCameraCharacter SKIP: faction mismatch playable=" + playableFactionKey + " spectator=" + lastPlayerFaction);
-					return false;
-				}
-			}
-		}
-		PS_ManualCameraSpectator camera = PS_ManualCameraSpectator.Cast(GetGame().GetCameraManager().CurrentCamera());
-		if (camera)
-			if (m_GameMode.GetFriendliesSpectatorOnly())
-				camera.SetCharacterEntityMove(characterEntity);
-			else
-				camera.SetCharacterEntity(characterEntity);
-		return true;
+
+		GetGame().GetCallqueue().CallLater(DoRetrySetCameraCharacter, 500, false, rplId, attempt + 1);
 	}
 	
 	bool SetCameraMoveCharacter(RplId rplId)
@@ -234,13 +271,21 @@ class PS_SpectatorMenu: MenuBase
 			if (!characterEntity)
 				return false;
 		}
-		if (m_GameMode.GetFriendliesSpectatorOnly())
+		if (m_GameMode && m_GameMode.GetFriendliesSpectatorOnly())
 		{
-			int spectatorId = GetGame().GetPlayerController().GetPlayerId();
+			PlayerController spectatorController = GetGame().GetPlayerController();
+			if (!spectatorController || !m_PlayableManager)
+				return false;
+			int spectatorId = spectatorController.GetPlayerId();
 			RplId spectatorSlot = m_PlayableManager.GetPlayableByPlayer(spectatorId);
 			if (spectatorSlot != RplId.Invalid())
 			{
 				PS_PlayableContainer playableContainer = m_PlayableManager.GetPlayableById(rplId);
+				if (!playableContainer)
+				{
+					PS_DebugLogger.LogError("Spectator SetCameraMoveCharacter: playableContainer null for rplId=" + rplId.ToString());
+					return false;
+				}
 				FactionKey playableFactionKey = playableContainer.GetFactionKey();
 				FactionKey lastPlayerFaction = m_PlayableManager.GetPlayerFactionKeyRemembered(spectatorId);
 				if (playableFactionKey != lastPlayerFaction)
@@ -248,8 +293,13 @@ class PS_SpectatorMenu: MenuBase
 			}
 		}
 		PS_ManualCameraSpectator camera = PS_ManualCameraSpectator.Cast(GetGame().GetCameraManager().CurrentCamera());
-		if (camera)
-			camera.SetCharacterEntityMove(characterEntity);
+		if (camera && m_GameMode)
+		{
+			if (m_GameMode.GetFriendliesSpectatorOnly())
+				camera.SetCharacterEntityMove(characterEntity);
+			else
+				camera.SetCharacterEntity(characterEntity);
+		}
 		return true;
 	}
 	
@@ -305,6 +355,8 @@ class PS_SpectatorMenu: MenuBase
 		GetGame().GetCallqueue().CallLater(RoomSwitchToGlobal, 0);
 	}
 	
+	protected ref TraceParam m_CachedTraceParam;
+	
 	void UpdateCursorTarget()
 	{
 		int xs, ys;
@@ -315,13 +367,14 @@ class PS_SpectatorMenu: MenuBase
 		float yr = GetGame().GetWorkspace().DPIUnscale(ys);
 		vector outDir;
 		vector origin = GetGame().GetWorkspace().ProjScreenToWorld(xr, yr, outDir, GetGame().GetWorld());
-		TraceParam trace = new TraceParam();
-		trace.Start = origin;
-		trace.End = origin + outDir * 1000;
-		trace.Flags = TraceFlags.ANY_CONTACT | TraceFlags.WORLD | TraceFlags.ENTS | TraceFlags.OCEAN; 
-		trace.LayerMask = EPhysicsLayerPresets.Projectile;
-		float traceCursor = GetGame().GetWorld().TraceMove(trace, null);
-		m_vSelectedPosition = trace.Start + outDir * 1000 * traceCursor;
+		if (!m_CachedTraceParam)
+			m_CachedTraceParam = new TraceParam();
+		m_CachedTraceParam.Start = origin;
+		m_CachedTraceParam.End = origin + outDir * 1000;
+		m_CachedTraceParam.Flags = TraceFlags.ANY_CONTACT | TraceFlags.WORLD | TraceFlags.ENTS | TraceFlags.OCEAN; 
+		m_CachedTraceParam.LayerMask = EPhysicsLayerPresets.Projectile;
+		float traceCursor = GetGame().GetWorld().TraceMove(m_CachedTraceParam, null);
+		m_vSelectedPosition = m_CachedTraceParam.Start + outDir * 1000 * traceCursor;
 		
 		// Check icon under cursor
 		array<Widget> outWidgets = {};
@@ -330,7 +383,7 @@ class PS_SpectatorMenu: MenuBase
 		foreach (Widget widget : outWidgets)
 		{
 			if (!(widget.GetFlags() & WidgetFlags.IGNORE_CURSOR))
-				outWidgetsOut.Insert(widget)
+				outWidgetsOut.Insert(widget);
 		}
 		PS_SpectatorLabelIcon spectatorLabelIcon; 
 		if (outWidgetsOut.Count() > 0)
@@ -352,7 +405,7 @@ class PS_SpectatorMenu: MenuBase
 		// Check physic trace
 		else
 		{
-			SCR_ChimeraCharacter character = SCR_ChimeraCharacter.Cast(trace.TraceEnt);
+			SCR_ChimeraCharacter character = SCR_ChimeraCharacter.Cast(m_CachedTraceParam.TraceEnt);
 			if (character)
 			{
 				PS_SpectatorLabel spectatorLabel = PS_SpectatorLabel.Cast(character.FindComponent(PS_SpectatorLabel));
@@ -410,6 +463,8 @@ class PS_SpectatorMenu: MenuBase
 		}
 		
 		PS_PlayableComponent playableComponent = character.PS_GetPlayable();
+		if (!playableComponent)
+			return;
 		
 		int playerId = PS_PlayableManager.GetInstance().GetPlayerByPlayable(playableComponent.GetRplId());
 		string playerName = PS_PlayableManager.GetInstance().GetPlayerName(playerId);
@@ -469,17 +524,23 @@ class PS_SpectatorMenu: MenuBase
 		
 		SCR_ChimeraCharacter character = contextActionDataCharacter.GetCharacter();
 		PS_ManualCameraSpectator camera = PS_ManualCameraSpectator.Cast(GetGame().GetCameraManager().CurrentCamera());
-		if (camera)
+		if (camera && m_GameMode)
+		{
 			if (m_GameMode.GetFriendliesSpectatorOnly())
 				camera.SetCharacterEntityMove(character);
 			else
 				camera.SetCharacterEntity(character);
+		}
 	}
 	
 	void RoomSwitchToGlobal()
 	{
 		PlayerController playerController = GetGame().GetPlayerController();
+		if (!playerController)
+			return;
 		PS_PlayableControllerComponent playableController = PS_PlayableControllerComponent.Cast(playerController.FindComponent(PS_PlayableControllerComponent));
+		if (!playableController)
+			return;
 		playableController.MoveToVoNRoom(playerController.GetPlayerId(), "", "#PS-VoNRoom_Global");
 	}
 	
@@ -521,9 +582,17 @@ class PS_SpectatorMenu: MenuBase
 	
 	override void OnMenuClose()
 	{
+		// Cancel any pending camera retries so they don't fire on a closed menu
+		GetGame().GetCallqueue().Remove(DoRetrySetCameraCharacter);
+		m_rPendingCameraRplId = RplId.Invalid();
+
 		PlayerController playerController = GetGame().GetPlayerController();
-		PS_PlayableControllerComponent playableController = PS_PlayableControllerComponent.Cast(playerController.FindComponent(PS_PlayableControllerComponent));
-		playableController.LobbyVoNDisableImmediate();
+		if (playerController)
+		{
+			PS_PlayableControllerComponent playableController = PS_PlayableControllerComponent.Cast(playerController.FindComponent(PS_PlayableControllerComponent));
+			if (playableController)
+				playableController.LobbyVoNDisableImmediate();
+		}
 
 		super.OnMenuClose();
 		
@@ -568,16 +637,25 @@ class PS_SpectatorMenu: MenuBase
 		
 		UpdateCursorTarget();
 		
-		if (m_GameMode.GetFriendliesSpectatorOnly())
+		// Friendlies-only auto-find: when the camera has no character entity bound,
+		// scan playables for a live one and try to bind via Replication.FindItem only.
+		// RPC fallback is DISABLED here to avoid consuming the cooldown budget — only
+		// manual player clicks should trigger the server position request flow.
+		if (m_GameMode && m_GameMode.GetFriendliesSpectatorOnly())
 		{
 			PS_ManualCameraSpectator camera = PS_ManualCameraSpectator.Cast(GetGame().GetCameraManager().CurrentCamera());
+			if (!camera)
+				return;
 			if (!camera.GetCharacterEntity())
 			{
 				array<PS_PlayableContainer> playables = m_PlayableManager.GetPlayablesSorted();
 				foreach (PS_PlayableContainer playable : playables)
 				{
 					if (playable.GetDamageState() != EDamageState.DESTROYED)
-						SetCameraCharacter(playable.GetRplId());
+					{
+						if (SetCameraCharacter(playable.GetRplId(), false))
+							break;
+					}
 				}
 			}
 		}
@@ -588,7 +666,12 @@ class PS_SpectatorMenu: MenuBase
 		if (m_MapEntity && m_MapEntity.IsOpen())
 			m_InputManager.ActivateContext("MapContext");
 		
-		UpdateIcons();
+		float now = GetGame().GetWorld().GetWorldTime() * 1000;
+		if (now - m_fLastIconsUpdate >= ICONS_UPDATE_INTERVAL_MS)
+		{
+			m_fLastIconsUpdate = now;
+			UpdateIcons();
+		}
 		
 		Widget cursorWidget = WidgetManager.GetWidgetUnderCursor();
 		while (cursorWidget)
@@ -717,15 +800,21 @@ class PS_SpectatorMenu: MenuBase
 	void Action_LobbyVoNOn()
 	{
 		PlayerController playerController = GetGame().GetPlayerController();
+		if (!playerController)
+			return;
 		PS_PlayableControllerComponent playableController = PS_PlayableControllerComponent.Cast(playerController.FindComponent(PS_PlayableControllerComponent));
-		playableController.LobbyVoNRadioEnable();
+		if (playableController)
+			playableController.LobbyVoNRadioEnable();
 	}
 	
 	void Action_LobbyVoNOff()
 	{
 		PlayerController playerController = GetGame().GetPlayerController();
+		if (!playerController)
+			return;
 		PS_PlayableControllerComponent playableController = PS_PlayableControllerComponent.Cast(playerController.FindComponent(PS_PlayableControllerComponent));
-		playableController.LobbyVoNDisable();
+		if (playableController)
+			playableController.LobbyVoNDisable();
 	}
 	
 	void Action_SwitchSpectatorUI()

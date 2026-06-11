@@ -74,7 +74,13 @@ class ReplicatedClassMap<Class TKey, Class TValue>
 
 	bool ReplaceKey(TKey old_key, TKey new_key)
 	{
-		return data.ReplaceKey(old_key, new_key);
+		if (old_key == new_key)
+			return true;
+		if (!data.Contains(old_key))
+			return false;
+		data.Set(new_key, data.Get(old_key));
+		data.Remove(old_key);
+		return true;
 	}
 
 	MapIterator Begin()
@@ -159,19 +165,20 @@ class ReplicatedClassMap<Class TKey, Class TValue>
 		if (snapCount != rplMap.Count())
 			return false;
 
-		foreach (TKey rplKey, TValue rplValue : rplMap.GetRawMap())
+		// Fix: iterate by index so the snapshot read order matches Extract write order.
+		// The old foreach over GetRawMap() iterated in hash-bucket order which does NOT
+		// match the index order used by Extract, causing PropCompare to always return false
+		// and triggering continuous replication of the entire map every frame.
+		for (int i = 0; i < snapCount; i++)
 		{
 			TKey key;
 			PS_Serializer<SSnapSerializerBase, TKey>.Serialize(snapshot, key);
-
-			if (!TValue.PropCompare(rplValue, snapshot, ctx))
-				return false;
 
 			TValue realValue;
 			if (!rplMap.Find(key, realValue))
 				return false;
 
-			if (rplValue != realValue)
+			if (!TValue.PropCompare(realValue, snapshot, ctx))
 				return false;
 		}
 		return true;

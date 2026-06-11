@@ -5,18 +5,12 @@ class PS_PlayableComponentClass : ScriptComponentClass
 
 class PS_PlayableComponent : ScriptComponent
 {
-	[RplProp(), Attribute()]
-	protected string m_sName;
-	[RplProp(), Attribute()]
-	protected bool m_bIsPlayable;
 	[Attribute()]
-	ref array<ResourceName> m_aRespawnPrefabs;
-
+	protected string m_sName;
+	[Attribute()]
+	protected bool m_bIsPlayable;
 	protected RplId m_RplId;
 	protected vector m_SpawnTransform[4];
-	[RplProp()]
-	int m_iRespawnCounter = 0;
-	protected bool m_bRespawned;
 
 	protected ref PS_SlotCharacterData m_SlotData;
 	protected PS_GameModeCoop m_GameModeCoop;
@@ -51,17 +45,6 @@ class PS_PlayableComponent : ScriptComponent
 	protected AIControlComponent m_AIControlComponent;
 	protected AIAgent m_AIAgent;
 
-	static protected int s_iRespawnTime;
-
-	void CopyState(PS_RespawnData respawnData)
-	{
-		if (respawnData.m_PlayableComponent)
-			respawnData.m_PlayableComponent.SetPlayable(false);
-		m_iRespawnCounter = respawnData.m_iRespawnCounter;
-		m_aRespawnPrefabs = respawnData.m_aRespawnPrefabs;
-		Math3D.MatrixCopy(respawnData.m_aSpawnTransform, m_SpawnTransform);
-	}
-
 	override void OnPostInit(IEntity owner)
 	{
 		m_Owner = SCR_ChimeraCharacter.Cast(owner);
@@ -78,21 +61,7 @@ class PS_PlayableComponent : ScriptComponent
 		Math3D.MatrixCopy(m_SpawnTransform, outMat);
 	}
 
-	ResourceName GetNextRespawn(bool nextPrefab)
-	{
-		if (!nextPrefab)
-			return m_Owner.GetPrefabData().GetPrefabName();
-
-		ResourceName prefab = "";
-		if (!m_aRespawnPrefabs)
-			return "";
-		if (m_aRespawnPrefabs.Count() > m_iRespawnCounter)
-			prefab = m_aRespawnPrefabs[m_iRespawnCounter];
-		m_iRespawnCounter++;
-		return prefab;
-	}
-
-	override void EOnInit(IEntity owner)
+override void EOnInit(IEntity owner)
 	{
 		m_FactionAffiliationComponent = FactionAffiliationComponent.Cast(owner.FindComponent(FactionAffiliationComponent));
 		m_EditableCharacterComponent = SCR_EditableCharacterComponent.Cast(owner.FindComponent(SCR_EditableCharacterComponent));
@@ -146,24 +115,7 @@ class PS_PlayableComponent : ScriptComponent
 		else RemoveFromList();
 	}
 
-	void OpenRespawnMenu(int time)
-	{
-		Rpc(RPC_OpenRespawnMenu, time);
-	}
-
-	[RplRpc(RplChannel.Reliable, RplRcver.Owner)]
-	void RPC_OpenRespawnMenu(int time)
-	{
-		s_iRespawnTime = time;
-		GetGame().GetMenuManager().OpenMenu(ChimeraMenuPreset.PlayableRespawnMenu);
-	}
-
-	int GetRespawnTime()
-	{
-		return s_iRespawnTime;
-	}
-
-	private void RemoveFromList()
+void RemoveFromList()
 	{
 		GetGame().GetCallqueue().Remove(AddToList);
 		GetGame().GetCallqueue().Remove(AddToListWrap);
@@ -190,25 +142,16 @@ class PS_PlayableComponent : ScriptComponent
 			m_PlayableManager.UnRegisterPlayable(m_RplId);
 	}
 
-	private void OnDamageStateChange(EDamageState state)
+	void OnDamageStateChange(EDamageState state)
 	{
 		if (!m_PlayableManager)
 			return;
-		if (!m_bRespawned && state == EDamageState.DESTROYED)
-		{
-			GetGame().GetCallqueue().CallLater(TryRespawn, 200, false, m_PlayableManager.GetPlayerByPlayableRemembered(m_RplId));
-			m_bRespawned = true;
-		}
+		// Echo Lobby pattern: only mark slot destroyed, do NOT trigger respawn/slot clearing.
+		// Spectator transition is handled by HandlePlayerKilled in PS_GameModeCoop.
 		m_PlayableManager.OnPlayableDamageStateChanged(m_RplId, state);
 	}
 
-	private void TryRespawn(int playerId)
-	{
-		if (m_GameModeCoop)
-			m_GameModeCoop.TryRespawn(m_RplId, playerId);
-	}
-
-	private void AddToList(IEntity owner)
+	void AddToList(IEntity owner)
 	{
 		GetGame().GetCallqueue().Remove(ForceActivateAI);
 		if (GetOwner().GetWorld() != GetGame().GetWorld())
@@ -220,7 +163,7 @@ class PS_PlayableComponent : ScriptComponent
 		GetGame().GetCallqueue().CallLater(AddToListWrap, 0, false, owner);
 	}
 
-	private void AddToListWrap(IEntity owner)
+	void AddToListWrap(IEntity owner)
 	{
 		if (!m_bIsPlayable)
 			return;
@@ -349,22 +292,4 @@ class PS_PlayableComponent : ScriptComponent
 	}
 };
 
-class PS_RespawnData
-{
-	PS_PlayableComponent m_PlayableComponent;
-	RplId m_Id;
-	ResourceName m_sPrefabName;
-	vector m_aSpawnTransform[4];
-	int m_iRespawnCounter;
-	ref array<ResourceName> m_aRespawnPrefabs;
-
-	void PS_RespawnData(PS_PlayableComponent playableComponent, ResourceName prefabName)
-	{
-		m_PlayableComponent = playableComponent;
-		m_sPrefabName = prefabName;
-		m_Id = playableComponent.GetRplId();
-		playableComponent.GetSpawnTransform(m_aSpawnTransform);
-		m_iRespawnCounter = playableComponent.m_iRespawnCounter;
-		m_aRespawnPrefabs = playableComponent.m_aRespawnPrefabs;
-	}
-};
+;

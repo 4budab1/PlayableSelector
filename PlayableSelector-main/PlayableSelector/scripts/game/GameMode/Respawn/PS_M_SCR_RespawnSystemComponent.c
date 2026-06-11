@@ -46,18 +46,21 @@ modded class SCR_RespawnSystemComponent : RespawnSystemComponent
 	//! \param[in] data
 	//! \return
 	override SCR_BaseSpawnPointRequestResultInfo GetSpawnPointRequestResultInfo(SCR_SpawnRequestComponent requestComponent, SCR_ESpawnResult response, SCR_SpawnData data){	return null;	} 
-	static override SCR_RespawnSystemComponent GetInstance()	{return null;}
+	static override SCR_RespawnSystemComponent GetInstance()	{return s_Instance;}
 	override RplComponent GetRplComponent()	{return null;}
-	static override MenuBase OpenRespawnMenu()	{return null;} 
-	static override void CloseRespawnMenu()	{return;} 
-	override void ServerSetEnableRespawn(bool enableSpawning){return;}  
-	override bool IsRespawnEnabled()	{return false;} 
-	override bool IsPauseMenuRespawnEnabled() {return null;} 
-	override bool IsFactionChangeAllowed() {return false;} 
-	override ScriptInvoker GetOnRespawnEnabledChanged() {return null;} 
+	static override MenuBase OpenRespawnMenu()	{return null;}
+	static override void CloseRespawnMenu()	{return;}
+	override void ServerSetEnableRespawn(bool enableSpawning){return;}
+	override bool IsRespawnEnabled()	{return false;}
+	override bool IsPauseMenuRespawnEnabled() {return null;}
+	override bool IsFactionChangeAllowed() {return false;}
+	override ScriptInvoker GetOnRespawnEnabledChanged() {return null;}
 	override void OnPlayerRegistered_S(int playerId) {return;}
 	override void OnPlayerDisconnected_S(int playerId, KickCauseCode cause, int timeout) {return;}
 	override void OnPlayerDeleted_S(int playerId) {return;}
-	override void OnInit(IEntity owner) {return;}
+	override void OnInit(IEntity owner)
+	{
+		s_Instance = this;
+	}
 	override void OnPlayerAuditSuccess_S(int playerId) {return;}
 }

@@ -1,0 +1,85 @@
+FrameWidgetClass {
+ Name "root"
+ Slot FrameWidgetSlot "{5CEE96372B5D270B}" {
+  Anchor 0 0 1 1
+  PositionX 0
+  OffsetLeft 0
+  PositionY 0
+  OffsetTop 0
+  SizeX 0
+  OffsetRight 0
+  SizeY 0
+  OffsetBottom 0
+ }
+ {
+  ImageWidgetClass "{5EBE323FAA1919DF}" {
+   Name "BlackOverlay"
+   Slot FrameWidgetSlot "{5CEE96372B5D270B}" {
+    Anchor 0 0 1 1
+    PositionX 0
+    OffsetLeft 0
+    PositionY 0
+    OffsetTop 0
+    SizeX 0
+    OffsetRight 0
+    SizeY 0
+    OffsetBottom 0
+   }
+   "Z Order" 0
+   Color 0 0 0 1
+   Opacity 0
+  }
+  TextWidgetClass "{6604C04D879C5553}" {
+   Name "QuoteText"
+   Slot FrameWidgetSlot "{5CEE96372B5D270B}" {
+    Anchor 0 0 1 1
+    PositionX 0
+    OffsetLeft 80
+    PositionY 0
+    OffsetTop 0
+    SizeX 0
+    OffsetRight -80
+    SizeY 0
+    OffsetBottom -80
+   }
+   "Z Order" 100
+   Text ""
+   "Font Size" 30
+   "Min Font Size" 18
+   "Horizontal Alignment" Center
+   "Vertical Alignment" Center
+   Wrap 1
+   FontProperties FontProperties "{60DCA242801B1ED3}" {
+    Font "{E2CBA6F76AAA42AF}UI/Fonts/Roboto/Roboto_Regular.fnt"
+    OutlineSize 3
+   }
+   "Text Color" 1 1 1 1
+  }
+  TextWidgetClass "{6604C04D879C5553}" {
+   Name "QuoteAuthor"
+   Slot FrameWidgetSlot "{5CEE96372B5D270B}" {
+    Anchor 0 0 1 1
+    PositionX 0
+    OffsetLeft 80
+    PositionY 0
+    OffsetTop 0
+    SizeX 0
+    OffsetRight -80
+    SizeY 0
+    OffsetBottom -80
+   }
+   "Z Order" 100
+   Text ""
+   "Font Size" 24
+   "Min Font Size" 16
+   "Horizontal Alignment" Center
+   "Vertical Alignment" Bottom
+   Wrap 1
+   FontProperties FontProperties "{60DCA242801B1ED3}" {
+    Font "{E2CBA6F76AAA42AF}UI/Fonts/Roboto/Roboto_Regular.fnt"
+    OutlineSize 2
+   }
+   "Text Color" 0.8 0.8 0.8 1
+  }
+ }
+}

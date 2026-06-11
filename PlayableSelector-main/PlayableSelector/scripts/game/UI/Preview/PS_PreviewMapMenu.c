@@ -38,7 +38,9 @@ class PS_PreviewMapMenu: ChimeraMenuBase
 		
 		m_wVoiceChatList = GetRootWidget().FindAnyWidget("VoiceChatFrame");
 		m_hVoiceChatList = PS_VoiceChatList.Cast(m_wVoiceChatList.FindHandler(PS_VoiceChatList));
-		
+		if (m_hVoiceChatList)
+			m_hVoiceChatList.Rebuild();
+
 		m_wGameModeHeader = GetRootWidget().FindAnyWidget("GameModeHeader");
 		m_hGameModeHeader = PS_GameModeHeader.Cast(m_wGameModeHeader.FindHandler(PS_GameModeHeader));
 		

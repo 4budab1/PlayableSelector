@@ -164,7 +164,7 @@ class PS_MissionDataManager : ScriptComponent
 		if (m_playerSaved.Contains(playerId))
 			return;
 		
-		string GUID = SCR_PlayerIdentityUtils.GetPlayerIdentityId(playerId);
+		string GUID = GetGame().GetBackendApi().GetPlayerPlatformId(playerId);
 		string name = m_PlayerManager.GetPlayerName(playerId);
 		
 		PS_MissionDataPlayer player = new PS_MissionDataPlayer();

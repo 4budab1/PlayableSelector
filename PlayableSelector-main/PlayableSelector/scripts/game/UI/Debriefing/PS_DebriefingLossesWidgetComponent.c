@@ -97,7 +97,7 @@ class PS_DebriefingLossesWidgetComponent : SCR_ScriptedWidgetComponent
 		m_wUndamaged.SetText(ok.ToString());
 	}
 	
-	private bool QueryEntities(IEntity e)
+	bool QueryEntities(IEntity e)
 	{
 		if (e.IsInherited(m_UnitType))
 		{

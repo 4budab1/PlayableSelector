@@ -62,11 +62,25 @@ class PS_ManualCameraSpectator : SCR_ManualCamera
 		characterCameraHandlerComponent.OnAlphatestChange(0);
 	}
 
+	protected bool m_bGameModeNullLogged = false;
+
 	void CameraPositionUpdate()
 	{
 		vector newTransform[4];
 		GetTransform(newTransform);
 		PS_GameModeCoop gameModeCoop = PS_GameModeCoop.Cast(GetGame().GetGameMode());
+		if (!gameModeCoop)
+		{
+			// Log once only — prevents per-frame log spam when this runs every frame
+			if (!m_bGameModeNullLogged)
+			{
+				PS_DebugLogger.LogError("PS_ManualCameraSpectator.CameraPositionUpdate: gameModeCoop is null — clearing character entity");
+				m_bGameModeNullLogged = true;
+			}
+			SetCharacterEntity(null);
+			return;
+		}
+		m_bGameModeNullLogged = false;
 		if (!SCR_Math3D.MatrixEqual(newTransform, oldTransform) && !gameModeCoop.GetFriendliesSpectatorOnly() && !m_bMoveLink)
 		{
 			SetCharacterEntity(null);
