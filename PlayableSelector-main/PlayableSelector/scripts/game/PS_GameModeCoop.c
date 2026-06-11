@@ -561,6 +561,7 @@ class PS_GameModeCoop : SCR_BaseGameMode
     SCR_EGameModeState currentState = GetState();
     PS_DebugLogger.LogImportant("OnPlayerConnected player=" + playerId.ToString() + " name=" + name + " gameModeState=" + typename.EnumToString(SCR_EGameModeState, currentState), playerId);
 
+    bool isSpectatorReconnect = false;
     RplId parkedSlot;
     if (playableManager.FindDisconnectedPlayerByGUID(guid, parkedSlot))
     {
@@ -580,9 +581,29 @@ class PS_GameModeCoop : SCR_BaseGameMode
           GetGame().GetCallqueue().CallLater(playableManager.ApplyPlayable, 1000, false, playerId);
         }
       }
+      else if (parkedSlot == RplId.Invalid())
+      {
+        // Spectator reconnect: player had no slot (was spectating) when they disconnected.
+        // In GAME state, skip SpawnInitialEntity (which puts the player at sky-high coords)
+        // and instead go straight to ApplyPlayable, which handles the no-slot case by
+        // spawning the InitialEntity at origin and switching to observer.
+        // In non-GAME states, let the normal SpawnInitialEntity run — the menu system
+        // handles the entity and the sky-high position is harmless there.
+        if (currentState == SCR_EGameModeState.GAME)
+        {
+          PS_DebugLogger.LogImportant("OnPlayerConnected RECONNECT SPECTATOR player=" + playerId.ToString() + " — will ApplyPlayable to observer", playerId);
+          isSpectatorReconnect = true;
+          playableManager.SetPlayerState(playerId, PS_EPlayableControllerState.Playing);
+          GetGame().GetCallqueue().CallLater(playableManager.ApplyPlayable, 500, false, playerId);
+        }
+        else
+        {
+          PS_DebugLogger.LogImportant("OnPlayerConnected RECONNECT SPECTATOR player=" + playerId.ToString() + " non-GAME state — falling through to SpawnInitialEntity", playerId);
+        }
+      }
       else
       {
-        PS_DebugLogger.LogImportant("OnPlayerConnected RECONNECT slot INVALID or DESTROYED — player has no slot", playerId);
+        PS_DebugLogger.LogImportant("OnPlayerConnected RECONNECT slot DESTROYED — player entity is dead", playerId);
       }
     }
     else
@@ -636,19 +657,24 @@ class PS_GameModeCoop : SCR_BaseGameMode
       }
     }
 
-    if (currentState == SCR_EGameModeState.GAME)
+    // Spectator reconnects skip SpawnInitialEntity — their ApplyPlayable call (scheduled above)
+    // handles entity creation at origin + observer switch, avoiding the sky-high spawn.
+    if (!isSpectatorReconnect)
     {
-      PS_DebugLogger.LogImportant("OnPlayerConnected GAME state — scheduling SpawnInitialEntity", playerId);
-      GetGame().GetCallqueue().CallLater(SpawnInitialEntity, 200, false, playerId);
-    }
-    else
-    {
-      #ifdef WORKBENCH
-      GetGame().GetCallqueue().CallLater(SpawnInitialEntity, 500, false, playerId);
-      #else
-      PS_DebugLogger.LogImportant("OnPlayerConnected NON-GAME state — scheduling SpawnInitialEntity 100ms", playerId);
-      GetGame().GetCallqueue().CallLater(SpawnInitialEntity, 100, false, playerId);
-      #endif
+      if (currentState == SCR_EGameModeState.GAME)
+      {
+        PS_DebugLogger.LogImportant("OnPlayerConnected GAME state — scheduling SpawnInitialEntity", playerId);
+        GetGame().GetCallqueue().CallLater(SpawnInitialEntity, 200, false, playerId);
+      }
+      else
+      {
+        #ifdef WORKBENCH
+        GetGame().GetCallqueue().CallLater(SpawnInitialEntity, 500, false, playerId);
+        #else
+        PS_DebugLogger.LogImportant("OnPlayerConnected NON-GAME state — scheduling SpawnInitialEntity 100ms", playerId);
+        GetGame().GetCallqueue().CallLater(SpawnInitialEntity, 100, false, playerId);
+        #endif
+      }
     }
     m_OnPlayerConnected.Invoke(playerId);
   }
@@ -789,8 +815,24 @@ class PS_GameModeCoop : SCR_BaseGameMode
     }
     else
     {
-      PS_DebugLogger.LogImportant("OnPlayerDisconnected player=" + playerId.ToString() + " had NO slot, removing directly", playerId);
-      playableManager.RemovePlayer(playerId, guid, true);
+      // Spectator (no slot): preserve reconnect info so the player returns to spectator
+      // on reconnect instead of spawning a sky-high InitialEntity as a "new" player.
+      PS_DebugLogger.LogImportant("OnPlayerDisconnected player=" + playerId.ToString() + " had NO slot (spectator), adding to reconnect pool", playerId);
+      playableManager.AddDisconnectedPlayerInfo(guid, RplId.Invalid(), playerId);
+      if (GetState() != SCR_EGameModeState.GAME)
+        GetGame().GetCallqueue().CallLater(RemoveDisconnectedPlayer, m_iReconnectTime, false, playerId);
+      else
+      {
+        if (m_iReconnectTimeAfterBriefing >= 0)
+        {
+          PS_DebugLogger.LogImportant("OnPlayerDisconnected GAME state (spectator) — scheduling RemoveDisconnectedPlayer in " + m_iReconnectTimeAfterBriefing.ToString() + "ms", playerId);
+          GetGame().GetCallqueue().CallLater(RemoveDisconnectedPlayer, m_iReconnectTimeAfterBriefing, false, playerId);
+        }
+        else
+        {
+          PS_DebugLogger.LogImportant("OnPlayerDisconnected GAME state (spectator) — infinite reservation", playerId);
+        }
+      }
     }
 
     IEntity controlledEntity;
