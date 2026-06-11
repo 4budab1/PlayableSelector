@@ -824,8 +824,24 @@ class PS_GameModeCoop : SCR_BaseGameMode
         playerGroup.RemovePlayer(playerId);
     }
 
-    // Call base class cleanup (entity deletion, replication cleanup, etc.)
-    super.OnPlayerDisconnected(playerId, cause, timeout);
+    // Echo Lobby pattern: do NOT call super.OnPlayerDisconnected() — the vanilla handler
+    // destroys the player's controlled entity, which prevents reconnection (the body is
+    // gone by the time the player reconnects, so IsSlotCharacterDestroyed() is true and
+    // the player falls through to spectator mode).
+    // Instead, manually propagate the disconnect event to all game-mode components
+    // without triggering the vanilla entity-deletion logic, leaving the physical
+    // character intact for the player to re-possess on reconnect.
+    m_OnPlayerDisconnected.Invoke(playerId, cause, timeout);
+
+    if (IsMaster() && m_pRespawnSystemComponent)
+      m_pRespawnSystemComponent.OnPlayerDisconnected_S(playerId, cause, timeout);
+
+    foreach (SCR_BaseGameModeComponent comp : m_aAdditionalGamemodeComponents)
+    {
+      comp.OnPlayerDisconnected(playerId, cause, timeout);
+    }
+
+    m_OnPostCompPlayerDisconnected.Invoke(playerId, cause, timeout);
   }
 
 	// ------------------------------------------ Faction Balance ------------------------------------------
