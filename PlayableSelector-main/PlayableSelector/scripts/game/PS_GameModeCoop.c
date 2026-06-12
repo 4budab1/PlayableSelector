@@ -875,8 +875,11 @@ class PS_GameModeCoop : SCR_BaseGameMode
     // character intact for the player to re-possess on reconnect.
     m_OnPlayerDisconnected.Invoke(playerId, cause, timeout);
 
-    if (IsMaster() && m_pRespawnSystemComponent)
-      m_pRespawnSystemComponent.OnPlayerDisconnected_S(playerId, cause, timeout);
+    // NOT calling m_pRespawnSystemComponent.OnPlayerDisconnected_S here:
+    // our modded SCR_RespawnSystemComponent no-ops it anyway, and when another
+    // mod's override chain routed it into the vanilla implementation instead,
+    // the null m_SpawnLogic crashed the VM on every disconnect (990 exceptions
+    // in one evening of server logs).
 
     foreach (SCR_BaseGameModeComponent comp : m_aAdditionalGamemodeComponents)
     {

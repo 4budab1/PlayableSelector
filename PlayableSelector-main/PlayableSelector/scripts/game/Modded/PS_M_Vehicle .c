@@ -38,8 +38,11 @@ modded class Vehicle
 	
 	void RegisterToMissionDate()
 	{
-		if (!m_bEnableMoveOnFreeze)
-			GetGame().GetCallqueue().CallLater(Freeze, 0, true);
+		// Freeze() scheduling removed: its velocity-zeroing body is commented out,
+		// so the repeating 0ms CallLater ran a no-op every frame for every frozen
+		// vehicle (20+ per-frame callbacks on a typical mission). Freeze-time
+		// movement blocking is handled by PS_PlayableControllerComponent.EOnFrame
+		// via the action manager and by the wheel brake below.
 		VehicleWheeledSimulation vehicleWheeledSimulation = VehicleWheeledSimulation.Cast(FindComponent(VehicleWheeledSimulation));
 		if (vehicleWheeledSimulation)
 		{

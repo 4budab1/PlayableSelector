@@ -50,6 +50,10 @@ class PS_SpectatorMenu: MenuBase
 	protected vector m_vSelectedPosition;
 	protected float m_fLastIconsUpdate = 0;
 	static const float ICONS_UPDATE_INTERVAL_MS = 100;
+	protected float m_fLastCursorUpdate = 0;
+	static const float CURSOR_UPDATE_INTERVAL_MS = 100;
+	protected float m_fLastAutoFindTime = 0;
+	static const float AUTO_FIND_INTERVAL_MS = 500;
 	
 	static void ResetTarget()
 	{
@@ -584,6 +588,7 @@ class PS_SpectatorMenu: MenuBase
 	{
 		// Cancel any pending camera retries so they don't fire on a closed menu
 		GetGame().GetCallqueue().Remove(DoRetrySetCameraCharacter);
+		GetGame().GetCallqueue().Remove(RoomSwitchToGlobal);
 		m_rPendingCameraRplId = RplId.Invalid();
 
 		PlayerController playerController = GetGame().GetPlayerController();
@@ -635,12 +640,22 @@ class PS_SpectatorMenu: MenuBase
 		else
 			m_wGameTimerText.SetVisible(false);
 		
-		UpdateCursorTarget();
-		
+		// Physics raycast + widget trace — too expensive to run every frame; 100ms is
+		// indistinguishable for cursor hover purposes. GetWorldTime() returns ms.
+		float nowCursor = GetGame().GetWorld().GetWorldTime();
+		if (nowCursor - m_fLastCursorUpdate >= CURSOR_UPDATE_INTERVAL_MS)
+		{
+			m_fLastCursorUpdate = nowCursor;
+			UpdateCursorTarget();
+		}
+
 		// Friendlies-only auto-find: when the camera has no character entity bound,
 		// scan playables for a live one and try to bind via Replication.FindItem only.
 		// RPC fallback is DISABLED here to avoid consuming the cooldown budget — only
 		// manual player clicks should trigger the server position request flow.
+		// Throttled to 500ms: running this every frame allocated 50+ containers per
+		// frame via GetPlayablesSorted (3,000 allocs/sec) and starved the script
+		// thread when no live friendly was bindable (dead-team worst case).
 		if (m_GameMode && m_GameMode.GetFriendliesSpectatorOnly())
 		{
 			PS_ManualCameraSpectator camera = PS_ManualCameraSpectator.Cast(GetGame().GetCameraManager().CurrentCamera());
@@ -648,13 +663,18 @@ class PS_SpectatorMenu: MenuBase
 				return;
 			if (!camera.GetCharacterEntity())
 			{
-				array<PS_PlayableContainer> playables = m_PlayableManager.GetPlayablesSorted();
-				foreach (PS_PlayableContainer playable : playables)
+				float nowAutoFind = GetGame().GetWorld().GetWorldTime();
+				if (nowAutoFind - m_fLastAutoFindTime >= AUTO_FIND_INTERVAL_MS)
 				{
-					if (playable.GetDamageState() != EDamageState.DESTROYED)
+					m_fLastAutoFindTime = nowAutoFind;
+					// Iterate slot ids directly — no PS_PlayableContainer allocations.
+					foreach (RplId slotId : m_PlayableManager.GetSortedSlotIds())
 					{
-						if (SetCameraCharacter(playable.GetRplId(), false))
-							break;
+						if (!m_PlayableManager.IsSlotCharacterDestroyed(slotId))
+						{
+							if (SetCameraCharacter(slotId, false))
+								break;
+						}
 					}
 				}
 			}
@@ -666,7 +686,9 @@ class PS_SpectatorMenu: MenuBase
 		if (m_MapEntity && m_MapEntity.IsOpen())
 			m_InputManager.ActivateContext("MapContext");
 		
-		float now = GetGame().GetWorld().GetWorldTime() * 1000;
+		// GetWorldTime() returns ms — the old "* 1000" here made the threshold trip
+		// every frame, so the 100ms icons throttle never actually throttled.
+		float now = GetGame().GetWorld().GetWorldTime();
 		if (now - m_fLastIconsUpdate >= ICONS_UPDATE_INTERVAL_MS)
 		{
 			m_fLastIconsUpdate = now;

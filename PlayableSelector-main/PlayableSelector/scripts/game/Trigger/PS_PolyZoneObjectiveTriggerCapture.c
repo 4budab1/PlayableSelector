@@ -103,6 +103,11 @@ class PS_PolyZoneObjectiveTriggerCapture : PS_PolyZoneObjectiveTrigger
 				{
 					m_mFactionTimers[factionKey] = 0;
 				}
+				// Flush the zeroed timers immediately — if the zone is not retakeable
+				// the FRAME handler stops below and the throttled broadcast would
+				// otherwise never deliver the final values to clients.
+				m_fLastTimerBroadcast = 0;
+				UpdateFactionTimers();
 				UpdateObjectives();
 				if (!m_bCanRetake)
 				{
@@ -114,12 +119,22 @@ class PS_PolyZoneObjectiveTriggerCapture : PS_PolyZoneObjectiveTrigger
 	
 	// Previous: broadcasted an RPC for every faction every frame — caused
 	// REPLICATION_FLOODED when multiple zones / factions were active.
-	// Now: only send the RPC when the timer actually changed (or at least
-	// one timer is non-zero), so we do not spam the reliable channel.
+	// Changed-value check alone is not enough: while a capture is in progress (or a
+	// timer is decaying back to 0) the value changes EVERY frame, which still meant
+	// 60 reliable broadcasts/sec per faction per zone. Clients only use the timers
+	// for the HUD progress readout, so 4 updates/sec is plenty.
 	ref map<FactionKey, float> m_mFactionTimersPrev = new map<FactionKey, float>();
+	protected float m_fLastTimerBroadcast = 0;
+	protected const float TIMER_BROADCAST_INTERVAL_MS = 250;
 
 	void UpdateFactionTimers()
 	{
+		// GetWorldTime() returns milliseconds.
+		float now = GetGame().GetWorld().GetWorldTime();
+		if (now - m_fLastTimerBroadcast < TIMER_BROADCAST_INTERVAL_MS)
+			return;
+		m_fLastTimerBroadcast = now;
+
 		foreach (FactionKey factionKey, float timer : m_mFactionTimers)
 		{
 			float prevTimer;

@@ -76,13 +76,18 @@ class PS_VoiceChatList : SCR_ScriptedWidgetComponent
 
 		Rebuild();
 
-		GetGame().GetCallqueue().CallLater(UpdateInfo, 100, true);
+		// 300ms is responsive enough for the join-arrow/mute indicators while cutting
+		// the per-row widget refresh cost to a third (UpdateInfo touches every player
+		// row and was a measurable client CPU sink at 100ms with 40+ players).
+		GetGame().GetCallqueue().CallLater(UpdateInfo, 300, true);
 		// Periodic full room-player sync. MovePlayer only fires for current clients;
 		// JIP clients need an extra sweep to populate rooms with players whose
 		// channel assignments were already replicated via m_PlayerChannelKeyMap
 		// before this menu opened.
-		// NOTE: Reduced from 500ms to 200ms for snappier JIP recovery and race-condition repair.
-		GetGame().GetCallqueue().CallLater(SyncRoomPlayers, 200, true);
+		// 500ms: this is a safety net — the event-driven MovePlayer path handles
+		// immediate updates; the reconcile sweep at 200ms dominated client script
+		// time in spectator (O(rooms × players) every tick).
+		GetGame().GetCallqueue().CallLater(SyncRoomPlayers, 500, true);
 	}
 	
 	void ~PS_VoiceChatList()
@@ -167,24 +172,28 @@ class PS_VoiceChatList : SCR_ScriptedWidgetComponent
 		// spectator flag here.)
 		m_bIsSpectator = ComputeIsSpectator();
 
-		PS_DebugLogger.Log("[VoN-CLI] Rebuild BEGIN playerId=" + m_iPlayerId.ToString() + " faction=" + m_sCurrentFactionKey + " isSpectator=" + m_bIsSpectator + " channelMapSize=" + m_gVoNChannelsManager.GetPlayerChannelKeyMapSize() + " roomMapSize=" + m_gVoNChannelsManager.GetRoomMapSize());
+		if (PS_DebugLogger.DebugEnabled)
+			PS_DebugLogger.Log("[VoN-CLI] Rebuild BEGIN playerId=" + m_iPlayerId.ToString() + " faction=" + m_sCurrentFactionKey + " isSpectator=" + m_bIsSpectator + " channelMapSize=" + m_gVoNChannelsManager.GetPlayerChannelKeyMapSize() + " roomMapSize=" + m_gVoNChannelsManager.GetRoomMapSize());
 
 		// Create initial list of visible rooms
 		array<int> visibleRooms = new array<int>();
 		GetVisibleRooms(visibleRooms);
-		string roomList = "";
-		foreach (int rid : visibleRooms)
-			roomList += rid.ToString() + "(" + m_gVoNChannelsManager.GetRoomName(rid) + ") ";
-		PS_DebugLogger.Log("[VoN-CLI] Rebuild visibleRooms count=" + visibleRooms.Count().ToString() + " rooms=[" + roomList + "]");
+		if (PS_DebugLogger.DebugEnabled)
+		{
+			string roomList = "";
+			foreach (int rid : visibleRooms)
+				roomList += rid.ToString() + "(" + m_gVoNChannelsManager.GetRoomName(rid) + ") ";
+			PS_DebugLogger.Log("[VoN-CLI] Rebuild visibleRooms count=" + visibleRooms.Count().ToString() + " rooms=[" + roomList + "]");
+		}
 		foreach (int roomId : visibleRooms)
 		{
-			string name = m_gVoNChannelsManager.GetRoomName(roomId);
 			CreateRoomIfNeed(roomId);
-			if (m_wRooms.Contains(roomId))
-				PS_DebugLogger.Log("[VoN-CLI] Rebuild created room id=" + roomId.ToString() + " name=" + name);
+			if (PS_DebugLogger.DebugEnabled && m_wRooms.Contains(roomId))
+				PS_DebugLogger.Log("[VoN-CLI] Rebuild created room id=" + roomId.ToString() + " name=" + m_gVoNChannelsManager.GetRoomName(roomId));
 		}
 
-		PS_DebugLogger.Log("[VoN-CLI] Rebuild DONE m_wRooms count=" + m_wRooms.Count().ToString());
+		if (PS_DebugLogger.DebugEnabled)
+			PS_DebugLogger.Log("[VoN-CLI] Rebuild DONE m_wRooms count=" + m_wRooms.Count().ToString());
 		UpdateInfo();
 	}
 	
@@ -884,14 +893,19 @@ class PS_VoiceChatList : SCR_ScriptedWidgetComponent
 		}
 
 
-		// DIAGNOSTIC: trace the final visible room list for this phase
-		string visibleList = "";
-		foreach (int vrid : outRoomsArray)
+		// DIAGNOSTIC: trace the final visible room list for this phase.
+		// Guarded — this runs every SyncRoomPlayers tick; the string building alone
+		// is measurable when diagnostics are off.
+		if (PS_DebugLogger.DebugEnabled)
 		{
-			if (visibleList != "") visibleList += ", ";
-			visibleList += vrid.ToString() + "=" + VoNChannelsManager.GetRoomName(vrid);
+			string visibleList = "";
+			foreach (int vrid : outRoomsArray)
+			{
+				if (visibleList != "") visibleList += ", ";
+				visibleList += vrid.ToString() + "=" + VoNChannelsManager.GetRoomName(vrid);
+			}
+			PS_DebugLogger.Log("[VoN-CLI] GetVisibleRooms phase=" + typename.EnumToString(SCR_EGameModeState, gameState) + " isSpectator=" + isSpectator.ToString() + " faction=" + currentPlayerFactionKey + " visibleCount=" + outRoomsArray.Count().ToString() + " rooms=[" + visibleList + "]");
 		}
-		PS_DebugLogger.Log("[VoN-CLI] GetVisibleRooms phase=" + typename.EnumToString(SCR_EGameModeState, gameState) + " isSpectator=" + isSpectator.ToString() + " faction=" + currentPlayerFactionKey + " visibleCount=" + outRoomsArray.Count().ToString() + " rooms=[" + visibleList + "]");
 	}
 	
 	void SetSelectedPlayer(int playerId)

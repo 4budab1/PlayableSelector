@@ -9,6 +9,10 @@ class PS_ManualCameraSpectator : SCR_ManualCamera
 	protected IEntity m_CharacterEntity;
 	protected vector oldTransform[4];
 	protected float m_fDistance;
+	// Bone indices cached per character — string-based GetBoneIndex lookups are
+	// too expensive to run every frame in CameraPositionUpdate.
+	protected int m_iBoneHead = -1;
+	protected int m_iBoneEyeLeft = -1;
 
 	override protected void EOnPostFrame(IEntity owner, float timeSlice)
 	{
@@ -37,8 +41,10 @@ class PS_ManualCameraSpectator : SCR_ManualCamera
 	{
 		ClearCharacterEntity();
 		m_CharacterEntity = characterEntity;
+		m_iBoneHead = -1;
+		m_iBoneEyeLeft = -1;
 		m_bMoveLink = false;
-		
+
 		GetTransform(oldTransform);
 	}
 
@@ -46,7 +52,9 @@ class PS_ManualCameraSpectator : SCR_ManualCamera
 	{
 		ClearCharacterEntity();
 		m_CharacterEntity = characterEntity;
-		
+		m_iBoneHead = -1;
+		m_iBoneEyeLeft = -1;
+
 		m_bMoveLink = false;
 		CameraPositionUpdate();
 		m_bMoveLink = true;
@@ -91,8 +99,12 @@ class PS_ManualCameraSpectator : SCR_ManualCamera
 		SCR_CharacterCameraHandlerComponent characterCameraHandlerComponent = SCR_CharacterCameraHandlerComponent.Cast(character.FindComponent(SCR_CharacterCameraHandlerComponent));
 		characterCameraHandlerComponent.OnAlphatestChange(255);
 
-		int boneHead = m_CharacterEntity.GetAnimation().GetBoneIndex("Head");
-		int boneEyeLeft = m_CharacterEntity.GetAnimation().GetBoneIndex("leftEye");
+		if (m_iBoneHead == -1)
+			m_iBoneHead = m_CharacterEntity.GetAnimation().GetBoneIndex("Head");
+		if (m_iBoneEyeLeft == -1)
+			m_iBoneEyeLeft = m_CharacterEntity.GetAnimation().GetBoneIndex("leftEye");
+		int boneHead = m_iBoneHead;
+		int boneEyeLeft = m_iBoneEyeLeft;
 		vector mat[4];
 		m_CharacterEntity.GetTransform(mat);
 		vector matHead[4];
@@ -124,7 +136,6 @@ class PS_ManualCameraSpectator : SCR_ManualCamera
 			if (m_fDistance > 0.5)
 			{
 				m_fDistance -= 0.5;
-				Print(m_fDistance);
 				vector moveVector = vector.Lerp(origin1, origin1 + originDiff.Normalized() * m_fDistance, GetGame().GetWorld().GetTimeSlice() * 5);
 				newTransform[3] = moveVector;
 				SetTransform(newTransform);

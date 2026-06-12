@@ -236,9 +236,14 @@ class PS_PlayerSelector : SCR_ButtonBaseComponent
 		if (playerId != m_iPlayerId)
 			return;
 		
-		m_wRoot.RemoveFromHierarchy();
-		m_PlayersList.OnPlayerRemoved(m_iPlayerId);
-		m_CoopLobby.OnPlayerRemoved(m_iPlayerId);
+		if (m_wRoot)
+			m_wRoot.RemoveFromHierarchy();
+		// m_PlayersList/m_CoopLobby can be null when RemovePlayer fires from
+		// SetPlayer -> UpdatePlayerState during lobby init (stale Disconnected state).
+		if (m_PlayersList)
+			m_PlayersList.OnPlayerRemoved(m_iPlayerId);
+		if (m_CoopLobby)
+			m_CoopLobby.OnPlayerRemoved(m_iPlayerId);
 	}
 	
 	// --------------------------------------------------------------------------------------------------------------------------------

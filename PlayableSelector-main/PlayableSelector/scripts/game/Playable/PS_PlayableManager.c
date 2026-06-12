@@ -1597,6 +1597,11 @@ class PS_PlayableManager : ScriptComponent
         if (damageState == EDamageState.DESTROYED)
         {
           sd.m_IsDestroyed = true;
+          // Release entity references for dead slots — the corpse is never
+          // resolved through the cache again (camera binding and ApplyPlayable
+          // both filter destroyed slots; live lookups use Replication.FindItem).
+          sd.m_CachedEntity = null;
+          m_EntityCache.Remove(slotId);
           m_CallbackHandler.GetOnSlotDestroyed().Invoke(slotId, true);
         }
 

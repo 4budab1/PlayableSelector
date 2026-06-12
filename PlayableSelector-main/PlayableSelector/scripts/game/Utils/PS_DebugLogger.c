@@ -5,10 +5,17 @@ class PS_RateLimitEntry
 
 class PS_DebugLogger
 {
-	static bool DebugEnabled = true;
+	// Verbose diagnostics are OFF by default. The Print() I/O volume from these
+	// logs (tens of MB per session on clients) measurably slows the script thread
+	// and contributed to REPLICATION_STALLED / FLOODED kicks. Flip to true only
+	// for debugging sessions. LogWarning/LogError always print.
+	static bool DebugEnabled = false;
 	private static ref map<string, ref PS_RateLimitEntry> m_RateTracker = new map<string, ref PS_RateLimitEntry>();
 	private const int MAX_DUPLICATES = 5;
 	private const float DEDUP_WINDOW = 10.0;
+	// Hard cap so per-message keys with embedded numbers can't grow the tracker
+	// unbounded over a long session.
+	private const int MAX_TRACKER_KEYS = 512;
 
 	static void Log(string message, int playerId = -1)
 	{
@@ -82,7 +89,22 @@ class PS_DebugLogger
 
 	private static bool IsAllowed(string key)
 	{
-		float now = GetGame().GetWorld().GetWorldTime();
+		// During game teardown GetGame()/GetWorld() can be null (logging from
+		// destructors / HandlerDeattached) — skip rate-limited logging entirely
+		// instead of crashing the VM.
+		ArmaReforgerScripted game = GetGame();
+		if (!game)
+			return false;
+		BaseWorld world = game.GetWorld();
+		if (!world)
+			return false;
+		float now = world.GetWorldTime();
+
+		// Keys embed dynamic values (ids, counts), so the tracker grows with
+		// message variety. Reset it when it gets too big — losing dedup history
+		// is harmless, leaking memory all session is not.
+		if (m_RateTracker.Count() > MAX_TRACKER_KEYS)
+			m_RateTracker.Clear();
 
 		ref PS_RateLimitEntry entry;
 		if (!m_RateTracker.Find(key, entry))

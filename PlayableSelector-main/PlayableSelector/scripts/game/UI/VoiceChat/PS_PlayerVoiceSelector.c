@@ -5,8 +5,16 @@
 class PS_PlayerVoiceSelector : SCR_ButtonComponent
 {
 	protected int m_iPlayerId;
-	
+
 	protected ResourceName m_sImageSet = "{D17288006833490F}UI/Textures/Icons/icons_wrapperUI-32.imageset";
+
+	// Last values pushed to the widgets. UpdateInfo runs on a periodic timer for
+	// every player row; re-setting a RichTextWidget re-parses the text and runs a
+	// localization lookup each time (one "Missing string ID" warning per call for
+	// plain player names). Only touch the widgets when the value actually changed.
+	protected string m_sLastSetName;
+	protected string m_sLastSetGroupName;
+	protected RplId m_LastIconPlayableId = RplId.Invalid();
 	
 	ImageWidget m_wUnitIcon;
 	ImageWidget m_wLeaderIcon;
@@ -78,7 +86,11 @@ class PS_PlayerVoiceSelector : SCR_ButtonComponent
 			if (m_iPlayerId == currentPlayerId)
 			{
 				m_wPlayerName.SetVisible(true);
-				m_wPlayerName.SetText(playerName);
+				if (playerName != m_sLastSetName)
+				{
+					m_wPlayerName.SetText(playerName);
+					m_sLastSetName = playerName;
+				}
 				m_wPlayerName.SetColor(Color.FromInt(0xffffffff));
 			}
 			else
@@ -97,7 +109,11 @@ class PS_PlayerVoiceSelector : SCR_ButtonComponent
 		m_wLeaderIcon.SetVisible(true);
 		m_wCharacterFactionColor.SetVisible(true);
 		
-		if (playerName != "") m_wPlayerName.SetText(playerName);
+		if (playerName != "" && playerName != m_sLastSetName)
+		{
+			m_wPlayerName.SetText(playerName);
+			m_sLastSetName = playerName;
+		}
 		m_wLeaderIcon.SetVisible(playableManager.IsPlayerGroupLeader(m_iPlayerId));
 		
 		FactionKey realFactionKey = playableManager.GetPlayerFactionKey(m_iPlayerId);
@@ -137,14 +153,23 @@ class PS_PlayerVoiceSelector : SCR_ButtonComponent
 		else m_wPlayerName.SetColor(Color.FromInt(0xffffffff));
 		
 		if (playableId != RplId.Invalid()) {
-			PS_PlayableContainer playableComponent = playableManager.GetPlayableById(playableId);
 			string groupName = PS_GroupHelper.GroupCallsignToGroupName(faction, groupCallSign);
-			
+
 			m_wUnitIcon.SetVisible(true);
 			m_wGroupName.SetVisible(true);
-			if (playableComponent)
-				playableComponent.SetIconTo(m_wUnitIcon);
-			m_wGroupName.SetText(groupName);
+			// GetPlayableById can allocate a container per call (entity not replicated
+			// in spectator) and the icon only changes with the slot — fetch on change only.
+			if (playableId != m_LastIconPlayableId)
+			{
+				PS_PlayableContainer playableComponent = playableManager.GetPlayableById(playableId);
+				if (playableComponent && playableComponent.SetIconTo(m_wUnitIcon))
+					m_LastIconPlayableId = playableId;
+			}
+			if (groupName != m_sLastSetGroupName)
+			{
+				m_wGroupName.SetText(groupName);
+				m_sLastSetGroupName = groupName;
+			}
 		}else{
 			m_wUnitIcon.SetVisible(false);
 			m_wGroupName.SetVisible(false);

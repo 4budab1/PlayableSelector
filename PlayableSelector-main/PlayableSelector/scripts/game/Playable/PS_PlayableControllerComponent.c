@@ -25,7 +25,10 @@ class PS_PlayableControllerComponent : ScriptComponent
 
 	protected bool IsRpcOnCooldown(int playerId, float cooldownMs = RPC_COOLDOWN_MS)
 	{
-		float now = GetGame().GetWorld().GetWorldTime() * 1000;
+		// GetWorldTime() already returns milliseconds — the old "* 1000" inflated the
+		// elapsed time 1000x, so the cooldown never engaged and client RPCs were
+		// effectively unthrottled.
+		float now = GetGame().GetWorld().GetWorldTime();
 		float lastTime;
 		if (m_mLastRpcTime.Find(playerId, lastTime) && (now - lastTime) < cooldownMs)
 			return true;
@@ -738,7 +741,14 @@ class PS_PlayableControllerComponent : ScriptComponent
 		{
 			SCR_ChimeraCharacter chimeraChar = SCR_ChimeraCharacter.Cast(character);
 			if (chimeraChar)
-				chimeraChar.GetDamageManager().SetHealthScaled(1);
+			{
+				// The lobby placeholder entity (InitialPlayer_Version2.et) casts to
+				// SCR_ChimeraCharacter but has no damage manager — without this guard
+				// every frame throws a VM exception while a player sits in lobby/freeze.
+				SCR_DamageManagerComponent damageManager = chimeraChar.GetDamageManager();
+				if (damageManager)
+					damageManager.SetHealthScaled(1);
+			}
 		}
 	}
 	

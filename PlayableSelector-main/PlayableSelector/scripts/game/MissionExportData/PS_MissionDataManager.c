@@ -40,7 +40,13 @@ class PS_MissionDataManager : ScriptComponent
 	
 	void RegisterVehicle(Vehicle vehicle)
 	{
+		if (!vehicle)
+			return;
 		RplComponent rplComponent = RplComponent.Cast(vehicle.FindComponent(RplComponent));
+		// Some mission-spawned vehicles have no RplComponent — without this guard
+		// world load throws a VM exception per such vehicle.
+		if (!rplComponent)
+			return;
 		SCR_EditableVehicleComponent editableVehicleComponent = SCR_EditableVehicleComponent.Cast(vehicle.FindComponent(SCR_EditableVehicleComponent));
 		FactionAffiliationComponent factionAffiliationComponent = FactionAffiliationComponent.Cast(vehicle.FindComponent(FactionAffiliationComponent));
 		SCR_DamageManagerComponent damageManagerComponent = SCR_DamageManagerComponent.Cast(vehicle.FindComponent(SCR_DamageManagerComponent));

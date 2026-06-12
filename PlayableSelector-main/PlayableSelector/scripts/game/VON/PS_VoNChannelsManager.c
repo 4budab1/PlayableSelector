@@ -131,6 +131,63 @@ class PS_VoNChannelsManager : ScriptComponent
     // in m_mDeferredVersion that grows unbounded over a long session with churn.
     if (m_mDeferredVersion)
       m_mDeferredVersion.Remove(playerId);
+    RemovePerPlayerChannels(playerId);
+  }
+
+  // Three channels are created for every connecting player (NO_SOUND_*, Local,
+  // Public). They were never removed, so over an evening with reconnect churn the
+  // channel maps grew unbounded (150+ channels observed) — inflating every JIP
+  // snapshot and every room sweep. OnPlayerDisconnected fires on the server and
+  // on every client, so removing locally keeps all machines consistent, and JIP
+  // clients receive the already-cleaned [RplProp] map snapshot.
+  protected void RemovePerPlayerChannels(int playerId)
+  {
+    if (!m_ChannelKeyToRoomId || !m_RoomIdToChannelKey)
+      return;
+
+    array<string> keysToRemove = {};
+    string localKey = BuildChannelKey("", "#PS-VoNRoom_Local" + playerId.ToString());
+    string publicKey = BuildChannelKey("", "#PS-VoNRoom_Public" + playerId.ToString());
+    string silentSuffix = "_" + playerId.ToString();
+    for (int i = 0; i < m_ChannelKeyToRoomId.Count(); i++)
+    {
+      string key = m_ChannelKeyToRoomId.GetKey(i);
+      if (key == localKey || key == publicKey)
+      {
+        keysToRemove.Insert(key);
+        continue;
+      }
+      // Silent channel embeds the player NAME (may be unavailable at disconnect
+      // time), so match by prefix + "_<playerId>" suffix instead of rebuilding it.
+      if (key.StartsWith(CHANNEL_SILENT_PREFIX) && key.EndsWith(silentSuffix))
+        keysToRemove.Insert(key);
+    }
+
+    foreach (string key : keysToRemove)
+    {
+      // Keep the channel if any connected player is still assigned to it (e.g.
+      // someone sitting in the disconnected player's public room) — it will be
+      // dropped once it empties and that player disconnects or moves away.
+      bool occupied = false;
+      if (m_PlayerChannelKeyMap)
+      {
+        for (int i = 0; i < m_PlayerChannelKeyMap.Count(); i++)
+        {
+          if (m_PlayerChannelKeyMap.GetElement(i) == key)
+          {
+            occupied = true;
+            break;
+          }
+        }
+      }
+      if (occupied)
+        continue;
+
+      int roomId;
+      if (m_ChannelKeyToRoomId.Find(key, roomId))
+        m_RoomIdToChannelKey.Remove(roomId);
+      m_ChannelKeyToRoomId.Remove(key);
+    }
   }
 
 	// --------------------------------------------------------------------------------------------
@@ -321,8 +378,12 @@ class PS_VoNChannelsManager : ScriptComponent
 		}
 		if (m_ChannelKeyToRoomId.Contains(channelKey))
 		{
-			int existingId = m_ChannelKeyToRoomId[channelKey];
-			PS_DebugLogger.Log("[VoN] InitChannelIfNeeded key=" + channelKey + " ALREADY EXISTS roomId=" + existingId.ToString() + " isServer=" + Replication.IsServer().ToString());
+			// Guarded — hit every SyncRoomPlayers/GetVisibleRooms tick for existing rooms.
+			if (PS_DebugLogger.DebugEnabled)
+			{
+				int existingId = m_ChannelKeyToRoomId[channelKey];
+				PS_DebugLogger.Log("[VoN] InitChannelIfNeeded key=" + channelKey + " ALREADY EXISTS roomId=" + existingId.ToString() + " isServer=" + Replication.IsServer().ToString());
+			}
 			return;
 		}
 
@@ -584,14 +645,19 @@ class PS_VoNChannelsManager : ScriptComponent
 			if (m_ChannelKeyToRoomId.Find(channelKey, playerRoomId) && playerRoomId == roomId)
 				players.Insert(playerId);
 		}
-		// DEBUG: trace every call so we can see what's in the room from the client's perspective
-		string playersStr = "";
-		for (int p = 0; p < players.Count(); p++)
+		// DEBUG: trace every call so we can see what's in the room from the client's perspective.
+		// Guarded — this runs every SyncRoomPlayers tick per room, so the string building
+		// alone is measurable when diagnostics are off.
+		if (PS_DebugLogger.DebugEnabled)
 		{
-			if (p > 0) playersStr += ",";
-			playersStr += players[p].ToString();
+			string playersStr = "";
+			for (int p = 0; p < players.Count(); p++)
+			{
+				if (p > 0) playersStr += ",";
+				playersStr += players[p].ToString();
+			}
+			PS_DebugLogger.Log("[VoN] GetPlayersInRoom roomId=" + roomId.ToString() + " found=" + players.Count().ToString() + " mapSize=" + m_PlayerChannelKeyMap.Count().ToString() + " players=[" + playersStr + "]");
 		}
-		PS_DebugLogger.Log("[VoN] GetPlayersInRoom roomId=" + roomId.ToString() + " found=" + players.Count().ToString() + " mapSize=" + m_PlayerChannelKeyMap.Count().ToString() + " players=[" + playersStr + "]");
 	}
 
 	bool IsPublicRoom(int roomId)

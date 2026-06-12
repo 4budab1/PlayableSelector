@@ -13,7 +13,7 @@ class PS_MissionDescriptionHeadersListUI : ScriptedWidgetComponent
 		if (!GetGame().InPlayMode())
 			return;
 		m_wRoot = w;
-		GetGame().GetCallqueue().CallLater(FillList, false, 0);
+		GetGame().GetCallqueue().CallLater(FillList, 0, false);
 		
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 		if (playableManager)
@@ -25,7 +25,7 @@ class PS_MissionDescriptionHeadersListUI : ScriptedWidgetComponent
 		int currentPlayerId = GetGame().GetPlayerController().GetPlayerId();
 		if (playerId != currentPlayerId)
 			return;
-		GetGame().GetCallqueue().CallLater(FillList, false, 0);
+		GetGame().GetCallqueue().CallLater(FillList, 0, false);
 	}
 	
 	void FillList()
