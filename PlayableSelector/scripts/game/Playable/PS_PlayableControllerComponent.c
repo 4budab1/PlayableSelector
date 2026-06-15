@@ -15,6 +15,11 @@ class PS_PlayableControllerComponent : ScriptComponent
 	protected vector m_vObserverPosition = "0 0 0";
 	protected vector lastCameraTransform[4];
 
+	void SetVoNPosition(vector VoNPosition)
+	{
+		m_vVoNPosition = VoNPosition;
+	}
+	
 	[RplProp()]
 	bool m_bOutFreezeTime;
 	
@@ -81,11 +86,6 @@ class PS_PlayableControllerComponent : ScriptComponent
 		GetGame().GetMenuManager().CloseMenuByPreset(ChimeraMenuPreset.FadeToGame);
 		GetGame().GetMenuManager().CloseMenuByPreset(ChimeraMenuPreset.DebriefingMenu);
 		GetGame().GetMenuManager().CloseMenuByPreset(ChimeraMenuPreset.PlayableRespawnMenu);
-
-		// Body-less: tear down the spectator camera/menu on any state change (the GAME case re-opens it
-		// below via ApplyPlayable when the player has no slot). No-op when not spectating.
-		SwitchFromObserver();
-
 		switch (state)
 		{
 			case SCR_EGameModeState.PREGAME:
@@ -111,9 +111,6 @@ class PS_PlayableControllerComponent : ScriptComponent
 				GetGame().GetMenuManager().OpenMenu(ChimeraMenuPreset.DebriefingMenu);
 				break;
 		}
-
-		// Body-less voice: re-evaluate the menu talking device on every menu/state change.
-		PS_MenuVoN.Refresh();
 	}
 
 	void AdvanceGameState(SCR_EGameModeState state)
@@ -390,9 +387,8 @@ class PS_PlayableControllerComponent : ScriptComponent
 		m_Camera = GetGame().SpawnEntityPrefab(resource, GetGame().GetWorld(), params);
 		*/
 		
-		// (Removed the per-frame UpdatePosition CallLater - it parked the old controlled BODY every frame;
-		// body-less there is no body, so it just burned a FindComponent per frame on the owner client doing
-		// nothing. SetEventMask FRAME stays for EOnFrame, the freeze-time fire blocker.)
+		//SetEventMask(GetOwner(), EntityEvent.POSTFIXEDFRAME);
+		GetGame().GetCallqueue().CallLater(UpdatePosition, 0, true, false);
 		SetEventMask(GetOwner(), EntityEvent.FRAME);
 		SCR_PlayerController playerController = SCR_PlayerController.Cast(PlayerController.Cast(GetOwner()));
 		playerController.m_OnControlledEntityChanged.Insert(OnControlledEntityChanged);
@@ -430,36 +426,36 @@ class PS_PlayableControllerComponent : ScriptComponent
 		RplComponent rpl = RplComponent.Cast(GetOwner().FindComponent(RplComponent));
 		if (!rpl.IsOwner())
 			return;
-
-		// Body-less voice: control changes flip menu-speaker state (took a playable / died) -
-		// re-evaluate the local menu talking device.
-		PS_MenuVoN.Refresh();
-
-		// Remember where control was lost - the spectator camera starts there.
-		if (!to && from)
+		if (!from && !m_bAfterInitialSwitch)
+			return;
+		if (!to && !m_bAfterInitialSwitch)
+			return;
+		if (!to) {
 			m_vObserverPosition = from.GetOrigin();
-
-		// Body-less: the old design keyed the observer transitions off a PS_LobbyVoNComponent on the
-		// controlled body. There is no body now (vonTo would ALWAYS be null -> SwitchFromObserver fired on
-		// every change, tearing the spectator down). Decide off the new entity's life state instead:
-		// returning to a LIVING character means the player is back in the game (leave spectator + tell the
-		// editor core we are alive so it releases the camera). Control going to NULL or to a DEAD corpse
-		// must NOT tear the spectator down - that path is owned by SendPlayerToSpectator_S /
-		// RPC_EnterSpectator, which also DELETES the corpse so control drops to null and frees VONDirect.
-		bool toIsLivingCharacter = false;
-		ChimeraCharacter toCharacter = ChimeraCharacter.Cast(to);
-		if (toCharacter)
-		{
-			SCR_DamageManagerComponent toDmg = SCR_DamageManagerComponent.Cast(toCharacter.FindComponent(SCR_DamageManagerComponent));
-			toIsLivingCharacter = !toDmg || toDmg.GetState() != EDamageState.DESTROYED;
 		}
-
-		if (toIsLivingCharacter)
+		m_bAfterInitialSwitch = true;
+		
+		PS_LobbyVoNComponent vonFrom;
+		if (from)
+			vonFrom = PS_LobbyVoNComponent.Cast(from.FindComponent(PS_LobbyVoNComponent));
+		PS_LobbyVoNComponent vonTo;
+		if (to)
+			vonTo = PS_LobbyVoNComponent.Cast(to.FindComponent(PS_LobbyVoNComponent));
+		if (!vonTo)
 		{
-			SwitchFromObserver();
 			PS_GameModeCoop gameModeCoop = PS_GameModeCoop.Cast(GetGame().GetGameMode());
 			if (gameModeCoop.GetState() == SCR_EGameModeState.GAME)
 				GetGame().GetCallqueue().Call(TellFuckingEditorCoreThanWeAlive, thisPlayerController.GetPlayerId(), to);
+		}
+		if (vonTo && !vonFrom)
+		{
+			if (from)
+				m_vObserverPosition = from.GetOrigin();
+			SwitchToObserver(from);
+		}
+		if (!vonTo)
+		{
+			SwitchFromObserver();
 		}
 	}
 	
@@ -593,75 +589,62 @@ class PS_PlayableControllerComponent : ScriptComponent
 		actionManager.SetActionValue("CarHazardLights", 0);
 	}
 
-	// EOnFixedFrame removed - FIXEDFRAME was never masked (the POSTFIXEDFRAME SetEventMask is commented out),
-	// so it never fired, and it only called the now-unused body-parking UpdatePosition.
+	override void EOnFixedFrame(IEntity owner, float timeSlice)
+	{
+		UpdatePosition(false);
+	}
+	
 	void UpdatePosition(bool force)
 	{
-		// Repeating call may still fire while the player controller is being torn down on disconnect
-		IEntity owner = GetOwner();
-		if (!owner)
+		RplComponent rpl = RplComponent.Cast(GetOwner().FindComponent(RplComponent));
+		if (!rpl.IsOwner())
 			return;
-		RplComponent rpl = RplComponent.Cast(owner.FindComponent(RplComponent));
-		if (!rpl || !rpl.IsOwner())
-			return;
-		PlayerController ownerPlayerController = PlayerController.Cast(owner);
-		if (!ownerPlayerController)
-			return;
-
+		
 		// Lets fight with phisyc engine
 		if (m_InitialEntity)
 		{
-			// While spectating, the server parks the body above the player's own corpse so the
-			// battlefield stays streamed around it (NDS streams around the controlled entity).
-			// The no-physics component keeps it there - don't drag it to the lobby grid.
-			if (m_Camera)
+			PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
+			int playerId = thisPlayerController.GetPlayerId();
+			m_vVoNPosition = Vector(0, 100000, 0) + Vector(1000 * Math.Mod(playerId, 10), 5000 * Math.Floor(Math.Mod(playerId, 100) / 10), 5000 * Math.Floor(playerId / 100));
+			vector currentOrigin = m_InitialEntity.GetOrigin();
+			//if (currentOrigin == m_vVoNPosition) return;
+			//Print("Move to: " + m_vVoNPosition.ToString());
+			
+			GameEntity gameEntity = GameEntity.Cast(m_InitialEntity);
+			vector mat[4];
+			Math3D.MatrixIdentity4(mat);
+			mat[3] = m_vVoNPosition;
+			if (force)
+				gameEntity.Teleport(mat);
+			gameEntity.SetTransform(mat);
+			
+			MenuBase menu = GetGame().GetMenuManager().GetTopMenu();
+			if (menu && (menu.IsInherited(PS_PreviewMapMenu) || menu.IsInherited(PS_CoopLobby) || menu.IsInherited(PS_BriefingMapMenu)))
 			{
-				// Who broke camera on map?
-				CameraBase specCameraBase = GetGame().GetCameraManager().CurrentCamera();
-				if (specCameraBase)
-					specCameraBase.ApplyTransform(GetGame().GetWorld().GetTimeSlice());
+				GetGame().GetCameraManager().CurrentCamera().SetWorldTransform(mat);
+				if (m_Camera)
+					m_Camera.SetTransform(mat);	
 			}
-			else
+
+			// Who broke camera on map?
+			CameraBase cameraBase = GetGame().GetCameraManager().CurrentCamera();
+			if (cameraBase)
+				cameraBase.ApplyTransform(GetGame().GetWorld().GetTimeSlice());
+ 
+
+			Physics physics = m_InitialEntity.GetPhysics();
+			if (physics)
 			{
-				// In menus (preview/lobby/briefing) pin the body to a deterministic per-player spot.
-				// VoN "rooms" rely on each player's body being spatially separated so proximity voice
-				// never bleeds between players; forcing the position guarantees uniqueness regardless
-				// of replication timing.
-				int playerId = ownerPlayerController.GetPlayerId();
-				m_vVoNPosition = PS_GameModeCoop.GetInitialEntityPosition(playerId);
-				vector currentOrigin = m_InitialEntity.GetOrigin();
-
-				vector mat[4];
-				Math3D.MatrixIdentity4(mat);
-				mat[3] = m_vVoNPosition;
-
-				// Touch the transform only when it actually drifted: this entity is owned by the local
-				// client, every SetTransform dirties its replication state, so per-frame would flood.
-				if (force || vector.DistanceSq(currentOrigin, m_vVoNPosition) > 0.01)
-				{
-					GameEntity gameEntity = GameEntity.Cast(m_InitialEntity);
-					if (force)
-						gameEntity.Teleport(mat);
-					gameEntity.SetTransform(mat);
-
-					Physics physics = m_InitialEntity.GetPhysics();
-					if (physics)
-						physics.SetActive(ActiveState.INACTIVE);
-				}
-
-				MenuBase menu = GetGame().GetMenuManager().GetTopMenu();
-				if (menu && (menu.IsInherited(PS_PreviewMapMenu) || menu.IsInherited(PS_CoopLobby) || menu.IsInherited(PS_BriefingMapMenu)))
-				{
-					GetGame().GetCameraManager().CurrentCamera().SetWorldTransform(mat);
-				}
-
-				// Who broke camera on map?
-				CameraBase cameraBase = GetGame().GetCameraManager().CurrentCamera();
-				if (cameraBase)
-					cameraBase.ApplyTransform(GetGame().GetWorld().GetTimeSlice());
+				//physics.SetVelocity("0 0 0");
+				//physics.SetAngularVelocity("0 0 0");
+				//physics.SetMass(0);
+				//physics.SetDamping(1, 1);
+				//physics.ChangeSimulationState(SimulationState.NONE);
+				physics.SetActive(ActiveState.INACTIVE);
 			}
 		} else {
-			IEntity entity = ownerPlayerController.GetControlledEntity();
+			PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
+			IEntity entity = thisPlayerController.GetControlledEntity();
 			if (entity)
 			{
 				PS_LobbyVoNComponent von = PS_LobbyVoNComponent.Cast(entity.FindComponent(PS_LobbyVoNComponent));
@@ -736,81 +719,48 @@ class PS_PlayableControllerComponent : ScriptComponent
 		VoNRoomsManager.MoveToRoom(playerId, factionKey, roomName);
 	}
 
-	// Body-less: dead path (lobby voice is on the VoN proxy now, see PS_MenuVoN). Kept for the
-	// in-game character VoN callers; guarded so a body-less (null) controlled entity never derefs.
 	PS_LobbyVoNComponent GetVoN()
 	{
 		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
-		if (!thisPlayerController)
-			return null;
 		IEntity entity = thisPlayerController.GetControlledEntity();
-		if (!entity)
-			return null;
-		return PS_LobbyVoNComponent.Cast(entity.FindComponent(PS_LobbyVoNComponent));
+		PS_LobbyVoNComponent von = PS_LobbyVoNComponent.Cast(entity.FindComponent(PS_LobbyVoNComponent));
+		return von;
 	}
-	// Collect the lobby VoN radios from the controlled entity, in order.
-	// Works whether the radios are carried as inventory gadgets (full character carrier)
-	// or attached as direct child entities (stripped carrier without the inventory system).
-	// The carrier prefab must keep the two radios in a stable order (radio 0 first, radio 1 second).
-	protected void GetVoNRadios(out array<BaseRadioComponent> radios)
-	{
-		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
-		if (!thisPlayerController)
-			return;
-		IEntity entity = thisPlayerController.GetControlledEntity();
-		if (!entity)
-			return;
-
-		// Inventory gadget path (radios carried as items)
-		SCR_GadgetManagerComponent gadgetManager = SCR_GadgetManagerComponent.Cast(entity.FindComponent(SCR_GadgetManagerComponent));
-		if (gadgetManager)
-		{
-			array<SCR_GadgetComponent> gadgets = gadgetManager.GetGadgetsByType(EGadgetType.RADIO);
-			foreach (SCR_GadgetComponent gadget : gadgets)
-			{
-				BaseRadioComponent radio = BaseRadioComponent.Cast(gadget.GetOwner().FindComponent(BaseRadioComponent));
-				if (radio)
-					radios.Insert(radio);
-			}
-			if (radios.Count() >= 2)
-				return;
-			radios.Clear();
-		}
-
-		// Direct child entity path (radios attached without an inventory system)
-		IEntity child = entity.GetChildren();
-		while (child)
-		{
-			BaseRadioComponent radio = BaseRadioComponent.Cast(child.FindComponent(BaseRadioComponent));
-			if (radio)
-				radios.Insert(radio);
-			child = child.GetSibling();
-		}
-	}
-
 	RadioTransceiver GetVoNTransiver(int radioId)
 	{
-		array<BaseRadioComponent> radios = {};
-		GetVoNRadios(radios);
-		if (radioId < 0 || radioId >= radios.Count())
-			return null;
-		BaseRadioComponent radio = radios[radioId];
+		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
+		IEntity entity = thisPlayerController.GetControlledEntity();
+		SCR_GadgetManagerComponent gadgetManager = SCR_GadgetManagerComponent.Cast(entity.FindComponent(SCR_GadgetManagerComponent));
+		array<SCR_GadgetComponent> radios = gadgetManager.GetGadgetsByType(EGadgetType.RADIO);
+		IEntity radioEntity = radios[radioId].GetOwner();
+		BaseRadioComponent radio = BaseRadioComponent.Cast(radioEntity.FindComponent(BaseRadioComponent));
 		radio.SetPower(true);
 		RadioTransceiver transiver = RadioTransceiver.Cast(radio.GetTransceiver(0));
 		transiver.SetFrequency(radioId + 1);
 		return transiver;
 	}
-	// Body-less: lobby push-to-talk is now owned by PS_MenuVoN (it binds VONDirect while the local
-	// player is a menu speaker). These three remain only because some menus still bind them as input
-	// actions; they are deliberate no-ops now (there is no controlled body VoN to drive).
 	void LobbyVoNEnable()
 	{
+		UpdatePosition(true);
+		GetGame().GetCallqueue().Remove(LobbyVoNDisableDelayed);
+		PS_LobbyVoNComponent von = GetVoN();
+		von.SetTransmitRadio(GetVoNTransiver(1));
+		von.SetCommMethod(ECommMethod.SQUAD_RADIO);
+		von.SetCapture(true);
 	}
 	void LobbyVoNRadioEnable()
 	{
+		UpdatePosition(true);
+		GetGame().GetCallqueue().Remove(LobbyVoNDisableDelayed);
+		PS_LobbyVoNComponent von = GetVoN();
+		von.SetTransmitRadio(GetVoNTransiver(0));
+		von.SetCommMethod(ECommMethod.SQUAD_RADIO);
+		von.SetCapture(true);
 	}
 	void LobbyVoNDisable()
 	{
+		// Delay VoN disable
+		GetGame().GetCallqueue().CallLater(LobbyVoNDisableDelayed, PS_LobbyVoNComponent.PS_TRANSMISSION_TIMEOUT_MS);
 	}
 	void LobbyVoNDisableDelayed()
 	{
@@ -825,19 +775,27 @@ class PS_PlayableControllerComponent : ScriptComponent
 	{
 		if (!GetVoN())
 			return;
-		array<BaseRadioComponent> radios = {};
-		GetVoNRadios(radios);
-		if (radios.Count() >= 2)
+		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
+		IEntity entity = thisPlayerController.GetControlledEntity();
+		if (!entity)
+			return;
+		SCR_GadgetManagerComponent gadgetManager = SCR_GadgetManagerComponent.Cast(entity.FindComponent(SCR_GadgetManagerComponent));
+		array<SCR_GadgetComponent> radios = gadgetManager.GetGadgetsByType(EGadgetType.RADIO);
+		if (radios.Count() > 0)
 		{
-			radios[0].SetEncryptionKey(VoNKey);
-			radios[1].SetEncryptionKey(VoNKeyLocal);
+			BaseRadioComponent radio = BaseRadioComponent.Cast(radios[0].GetOwner().FindComponent(BaseRadioComponent));
+			radio.SetEncryptionKey(VoNKey);
+			radio = BaseRadioComponent.Cast(radios[1].GetOwner().FindComponent(BaseRadioComponent));
+			radio.SetEncryptionKey(VoNKeyLocal);
 		}
 	}
 	bool isVonInit()
 	{
-		array<BaseRadioComponent> radios = {};
-		GetVoNRadios(radios);
-		return radios.Count() >= 2;
+		PlayerController thisPlayerController = PlayerController.Cast(GetOwner());
+		IEntity entity = thisPlayerController.GetControlledEntity();
+		SCR_GadgetManagerComponent gadgetManager = SCR_GadgetManagerComponent.Cast(entity.FindComponent(SCR_GadgetManagerComponent));
+		IEntity radioEntity = gadgetManager.GetGadgetByType(EGadgetType.RADIO);
+		return radioEntity;
 	}
 	
 	void GetArmaIdFromServer(int playerId)
@@ -863,60 +821,6 @@ class PS_PlayableControllerComponent : ScriptComponent
 		cameraManager.GetLastCameraTransform(lastCameraTransform);
 	}
 
-	// ------------------ Spectator streaming observer: REMOVED ------------------
-	// An MPObserver (RplComponent.InsertMPObserver) used to follow the spectator camera and stream the
-	// battlefield around the view. It was the ONLY spectator-streaming mechanism among the reference
-	// lobbies (Echo and LiteLobby use none) and the main remaining "Replication Flooded/Stalled" lever, so
-	// it is removed entirely. Spectators now see only what default NDS streams around their parked corpse,
-	// exactly like Echo/LiteLobby. The GetSpectatorStreamingObserver() gamemode flag is now inert.
-
-	// ------------------ Spectate a player outside this client's replication pool ------------------
-	// With default NDS culling (force-streaming disabled) a distant playable is not replicated here, so
-	// PS_SpectatorMenu.SetCameraCharacter cannot resolve a local entity to follow. Instead ask the server
-	// for that playable's world position, fly the free spectator camera there, and (when the streaming
-	// observer is enabled) push the observer to that spot so the area - and the player - streams in. Once
-	// the player is streamed, clicking them again takes the normal first-person follow path.
-	protected static const float SPECTATE_JUMP_EYE_OFFSET_M = 2.0;
-
-	void RequestSpectatePosition(RplId playableId)
-	{
-		if (playableId == RplId.Invalid() || !m_Camera)
-			return;
-		Rpc(RPC_RequestSpectatePosition, playableId);
-	}
-	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
-	protected void RPC_RequestSpectatePosition(RplId playableId)
-	{
-		// Server has every entity - resolve the playable and read its current position.
-		RplComponent rpl = RplComponent.Cast(Replication.FindItem(playableId));
-		if (!rpl)
-			return;
-		IEntity entity = rpl.GetEntity();
-		if (!entity)
-			return;
-		vector pos = entity.GetOrigin();
-		if (GetGame().GetPlayerController() == GetOwner())
-			RPC_ReceiveSpectatePosition(playableId, pos);
-		else
-			Rpc(RPC_ReceiveSpectatePosition, playableId, pos);
-	}
-	[RplRpc(RplChannel.Reliable, RplRcver.Owner)]
-	protected void RPC_ReceiveSpectatePosition(RplId playableId, vector pos)
-	{
-		PS_ManualCameraSpectator camera = PS_ManualCameraSpectator.Cast(m_Camera);
-		if (!camera)
-			return; // no longer spectating
-
-		// A previous AttachTo would fight the teleport - drop it first.
-		if (PS_AttachManualCameraObserverComponent.s_Instance && PS_AttachManualCameraObserverComponent.s_Instance.GetTarget())
-			PS_AttachManualCameraObserverComponent.s_Instance.Detach();
-
-		camera.MoveToPosition(pos + vector.Up * SPECTATE_JUMP_EYE_OFFSET_M);
-		// NOTE: with the spectator streaming observer removed, this moves the camera to the player's reported
-		// position, but the player model only renders if they fall within what default NDS already streams
-		// around the spectator's parked corpse - there is no battlefield streaming following the camera now.
-	}
-
 	void SwitchToObserver(IEntity from)
 	{
 		SCR_EditorManagerEntity editorManagerEntity = SCR_EditorManagerEntity.GetInstance();
@@ -931,10 +835,7 @@ class PS_PlayableControllerComponent : ScriptComponent
 		EntitySpawnParams params = new EntitySpawnParams();
 		if (from)
 			from.GetTransform(params.Transform);
-		// Spectators talk on the global VoN room (matches SendPlayerToSpectator_S and RoomSwitchToGlobal).
-		// This was "", "" (the empty-room channel), which briefly routed the spectator to a different
-		// channel than everyone else's global room.
-		MoveToVoNRoom(thisPlayerController.GetPlayerId(), "", "#PS-VoNRoom_Global");
+		MoveToVoNRoom(thisPlayerController.GetPlayerId(), "", "");
 		Resource resource = Resource.Load("{6EAA30EF620F4A2E}Prefabs/Editor/Camera/ManualCameraSpectator.et");
 		m_Camera = GetGame().SpawnEntityPrefab(resource, GetGame().GetWorld(), params);
 
@@ -952,72 +853,17 @@ class PS_PlayableControllerComponent : ScriptComponent
 		GetGame().GetCameraManager().SetCamera(CameraBase.Cast(m_Camera));
 
 		PS_GameModeCoop gameMode = PS_GameModeCoop.Cast(GetGame().GetGameMode());
-
 		if (gameMode.GetFriendliesSpectatorOnly())
 			PS_ManualCameraSpectator.Cast(m_Camera).SetCharacterEntityMove(from);
-
-		// Body-less: keep the spectator camera from being stolen by the corpse death-cam / editor / map.
-		StartSpectatorCameraWatchdog();
 	}
 
 	void SwitchFromObserver()
 	{
 		if (!m_Camera)
 			return;
-		GetGame().GetCallqueue().Remove(EnforceSpectatorCamera);
 		GetGame().GetMenuManager().CloseMenuByPreset(ChimeraMenuPreset.SpectatorMenu);
 		SCR_EntityHelper.DeleteEntityAndChildren(m_Camera);
 		m_Camera = null;
-	}
-
-	// Body-less spectator camera watchdog: the player keeps their dead CORPSE as the controlled entity,
-	// whose death-cam (and the editor/world/preview cameras) try to grab the view. While spectating,
-	// re-assert the free spectator camera as the active one. Ported from LiteLobby (EnforceSpectatorCamera).
-	protected void StartSpectatorCameraWatchdog()
-	{
-		GetGame().GetCallqueue().Remove(EnforceSpectatorCamera);
-		GetGame().GetCallqueue().CallLater(EnforceSpectatorCamera, 500, true);
-		GetGame().GetCallqueue().CallLater(EnforceSpectatorCamera, 0, false);
-	}
-	protected void EnforceSpectatorCamera()
-	{
-		if (!m_Camera)
-		{
-			GetGame().GetCallqueue().Remove(EnforceSpectatorCamera);
-			return;
-		}
-		MenuManager menuManager = GetGame().GetMenuManager();
-		if (!menuManager)
-			return;
-
-		MenuBase topMenu = menuManager.GetTopMenu();
-		// No menu at all (a stage preview closed over us): the spectator menu IS this player's GAME
-		// view - restore it, then re-take the camera below.
-		if (!topMenu && !menuManager.IsAnyDialogOpen())
-		{
-			if (!menuManager.FindMenuByPreset(ChimeraMenuPreset.SpectatorMenu))
-				menuManager.OpenMenu(ChimeraMenuPreset.SpectatorMenu);
-		}
-		// A fullscreen menu other than the spectator screen is on top (lobby/briefing/map opened over
-		// us): ownership is irrelevant while it covers the screen - decide again next tick.
-		else if (topMenu && !topMenu.IsInherited(PS_SpectatorMenu))
-			return;
-
-		// An opened editor grabs the camera every frame - close it (reopening GM stays one key away).
-		SCR_EditorManagerEntity editorManager = SCR_EditorManagerEntity.GetInstance();
-		if (editorManager && editorManager.IsOpened())
-		{
-			if (editorManager.IsInTransition())
-				return;
-			editorManager.Close(false);
-			return;
-		}
-
-		CameraManager cameraManager = GetGame().GetCameraManager();
-		if (!cameraManager)
-			return;
-		if (cameraManager.CurrentCamera() != m_Camera)
-			cameraManager.SetCamera(CameraBase.Cast(m_Camera));
 	}
 
 	// Force change game state
@@ -1049,44 +895,6 @@ class PS_PlayableControllerComponent : ScriptComponent
 	{
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 		playableManager.ForceSwitch(playerId)
-	}
-
-	// Server: ask the owning client to enter the spectator camera/menu. Used on death - the player
-	// keeps their corpse as the controlled entity, so no control change fires the client trigger.
-	void EnterSpectatorOwner()
-	{
-		// Listen host: Rpc() never executes on the sending machine, so call directly there.
-		if (GetGame().GetPlayerController() == GetOwner())
-			RPC_EnterSpectator();
-		else
-			Rpc(RPC_EnterSpectator);
-	}
-	[RplRpc(RplChannel.Reliable, RplRcver.Owner)]
-	void RPC_EnterSpectator()
-	{
-		// Dead -> menu speaker: refresh the menu talking device (death does not change the controlled
-		// entity, so OnControlledEntityChanged would not fire this).
-		PS_MenuVoN.Refresh();
-
-		// Open the spectator camera/menu, starting at the corpse if we still control it.
-		PlayerController pc = PlayerController.Cast(GetOwner());
-		IEntity corpse;
-		if (pc)
-			corpse = pc.GetControlledEntity();
-		SwitchToObserver(corpse);
-
-		// The corpse's dead life-state and the released playable slot replicate on a path that is NOT
-		// ordered with this RPC, so PS_IsMenuSpeaker can still read FALSE for a frame or two right here.
-		// Refresh() would then deactivate the menu device and never re-trigger (control does not change
-		// while spectating) - the spectator could neither speak nor hear. Re-run it after the state has
-		// settled so it activates reliably.
-		GetGame().GetCallqueue().Remove(RefreshMenuVoNRetry);
-		GetGame().GetCallqueue().CallLater(RefreshMenuVoNRetry, 300, false);
-		GetGame().GetCallqueue().CallLater(RefreshMenuVoNRetry, 1200, false);
-	}
-	protected void RefreshMenuVoNRetry()
-	{
-		PS_MenuVoN.Refresh();
 	}
 
 	// Get controll on selected playable entity

@@ -181,9 +181,15 @@ class PS_CoopLobby : MenuBase
 		m_PlayersSearchBox.m_OnWriteModeEnter.Insert(OnPlayersSearchWriteModeEnter);
 		m_PlayersSearchBox.m_OnWriteModeLeave.Insert(OnPlayersSearchWriteModeLeave);
 		
-		// Body-less voice: push-to-talk is owned by PS_MenuVoN (binds VONDirect while the local
-		// player is a menu speaker). No per-menu VoN bindings - they drove the removed body VoN.
-
+		// Actions
+		if (m_GameModeCoop.GetState() == SCR_EGameModeState.SLOTSELECTION)
+		{
+			m_InputManager.AddActionListener("VONDirect", EActionTrigger.DOWN, Action_LobbyVoNOn);
+			m_InputManager.AddActionListener("VONDirect", EActionTrigger.UP, Action_LobbyVoNOff);
+			//m_InputManager.AddActionListener("VONChannel", EActionTrigger.DOWN, Action_LobbyVoNChannelOn);
+			m_InputManager.AddActionListener("VONChannel", EActionTrigger.UP, Action_LobbyVoNChannelOff);
+		}
+		
 		m_LobbyLoadoutPreview.SetItemInfoWidget(m_wLobbyLittleInventoryItemInfo);
 		
 		// Init
@@ -203,7 +209,14 @@ class PS_CoopLobby : MenuBase
 	
 	override void OnMenuClose()
 	{
-if (m_PlayableManager)
+		if (m_InputManager)
+		{
+			m_InputManager.RemoveActionListener("VONDirect", EActionTrigger.DOWN, Action_LobbyVoNOn);
+			m_InputManager.RemoveActionListener("VONDirect", EActionTrigger.UP, Action_LobbyVoNOff);
+			//m_InputManager.RemoveActionListener("VONChannel", EActionTrigger.DOWN, Action_LobbyVoNChannelOn);
+			m_InputManager.RemoveActionListener("VONChannel", EActionTrigger.UP, Action_LobbyVoNChannelOff);
+		}
+		if (m_PlayableManager)
 		{
 			m_PlayableManager.GetOnFactionChange().Remove(UpdatePlayerFaction);
 			m_PlayableManager.GetOnStartTimerCounterChanged().Remove(OnStartTimerCounterChanged);

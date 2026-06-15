@@ -10,7 +10,7 @@ class PS_VoiceRoomHeader : SCR_ButtonBaseComponent
 	ImageWidget m_wFactionColor;
 	TextWidget m_wRoomName;
 	string m_sRoomName;
-	string m_sChannelKey;
+	int m_iRoomId;
 	SCR_Faction m_fFaction;
 	
 	override void HandlerAttached(Widget w)
@@ -26,12 +26,12 @@ class PS_VoiceRoomHeader : SCR_ButtonBaseComponent
 		GetGame().GetCallqueue().CallLater(AddOnClick, 0);
 	}
 	
-	void SetRoomName(SCR_Faction faction, string roomName, string channelKey)
+	void SetRoomName(SCR_Faction faction, string roomName, int roomId)
 	{
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 		m_sRoomName = roomName;
 		m_fFaction = faction;
-		m_sChannelKey = channelKey;
+		m_iRoomId = roomId;
 		
 		if (m_fFaction)
 		{
@@ -53,9 +53,9 @@ class PS_VoiceRoomHeader : SCR_ButtonBaseComponent
 		m_wRoomName.SetText(name);
 	}
 	
-	string GetChannelKey()
+	int GetRoomId()
 	{
-		return m_sChannelKey;
+		return m_iRoomId;
 	}
 	
 	void AddOnClick()
@@ -70,7 +70,7 @@ class PS_VoiceRoomHeader : SCR_ButtonBaseComponent
 		PlayerController playerController = GetGame().GetPlayerController();
 		int playerId = playerController.GetPlayerId();
 		
-		if (VoNRoomsManager.GetPlayerChannel(playerId) == m_sChannelKey) {
+		if (VoNRoomsManager.GetPlayerRoom(playerId) == m_iRoomId) {
 			m_wJoinRoomImage.SetVisible(false);
 			return;
 		}

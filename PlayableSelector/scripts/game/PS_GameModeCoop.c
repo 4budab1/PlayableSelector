@@ -63,9 +63,6 @@ class PS_GameModeCoop : SCR_BaseGameMode
 
 	[Attribute("0", UIWidgets.CheckBox, "", category: "Reforger Lobby")]
 	protected bool m_bDisablePlayablesStreaming;
-
-	[Attribute("0", UIWidgets.CheckBox, "Stream the world around spectator cameras via a per-connection MPObserver (deferred + throttled). Enable this when DisablePlayablesStreaming is OFF so spectators still see the action without force-streaming every playable.", category: "Reforger Lobby")]
-	protected bool m_bSpectatorStreamingObserver;
 	
 	[Attribute("0", UIWidgets.CheckBox, "", category: "Reforger Lobby")]
 	protected bool m_bDisableGarbageSystem;
@@ -558,12 +555,6 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		#else
 		GetGame().GetCallqueue().CallLater(SpawnInitialEntity, 100, false, playerId);
 		#endif
-
-		// Restore reconnecting players' faction/slot AFTER vanilla SCR_ReconnectComponent has run
-		// (it applies on audit success, shortly after connect, and would otherwise leave the player
-		// factionless -> wrong-side markers). No-op for genuinely fresh joins (no cached GUID data).
-		GetGame().GetCallqueue().CallLater(playableManager.RestorePlayerReconnectData, 2500, false, playerId);
-
 		m_OnPlayerConnected.Invoke(playerId);
 	}
 
@@ -579,21 +570,11 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	{
 		PlayerManager playerManager = GetGame().GetPlayerManager();
 		SCR_PlayerController playerController = SCR_PlayerController.Cast(playerManager.GetPlayerController(playerId));
-		if (!playerController)
-			return;
 		PS_PlayableControllerComponent playableController = PS_PlayableControllerComponent.Cast(playerController.FindComponent(PS_PlayableControllerComponent));
 
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
-		// Cache faction/slot by GUID now, while the playerId-keyed state still exists, so the player
-		// keeps their side (and map markers) when they reconnect under a new playerId.
-		playableManager.StorePlayerReconnectData(playerId);
 		playableManager.SetPlayerState(playerId, PS_EPlayableControllerState.Disconected);
 		if (m_iReconnectTime > 0) GetGame().GetCallqueue().CallLater(RemoveDisconnectedPlayer, m_iReconnectTime, false, playerId);
-
-		// Body-less: delete this player's VoN proxy (a reconnecting player gets a fresh one).
-		PS_VoNRoomsManager vonRoomsManager = PS_VoNRoomsManager.GetInstance();
-		if (vonRoomsManager)
-			vonRoomsManager.RemoveProxy_S(playerId);
 
 		IEntity controlledEntity = playerController.GetControlledEntity();
 		if (controlledEntity) {
@@ -607,11 +588,17 @@ class PS_GameModeCoop : SCR_BaseGameMode
 			comp.OnPlayerDisconnected(playerId, cause, timeout);
 		}
 
-		// NOTE: vanilla would call m_pRespawnSystemComponent.OnPlayerDisconnected_S here, but this
-		// lobby disables the respawn system (it is a no-op stub). The stub's modded no-op override is
-		// also bypassed at runtime by another addon re-modding SCR_RespawnSystemComponent, so the
-		// vanilla body runs and dereferences a null m_SpawnLogic - ~124 server VMEs per session.
-		// The respawn system does nothing here, so we simply do not call it.
+		m_OnPostCompPlayerDisconnected.Invoke(playerId, cause, timeout);
+
+		// RespawnSystemComponent is not a SCR_BaseGameModeComponent, so for now we have to
+		// propagate these events manually.
+		if (IsMaster())
+			m_pRespawnSystemComponent.OnPlayerDisconnected_S(playerId, cause, timeout);
+
+		foreach (SCR_BaseGameModeComponent comp : m_aAdditionalGamemodeComponents)
+		{
+			comp.OnPlayerDisconnected(playerId, cause, timeout);
+		}
 
 		m_OnPostCompPlayerDisconnected.Invoke(playerId, cause, timeout);
 
@@ -731,20 +718,6 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		playableController.SwitchToMenu(state);
 	}
 
-	// Parking position for initial (VoN) entities of players without a death position
-	// (lobby phase and JIP spectators), also their streaming relevance center.
-	// Planar XZ grid: network streaming relevance is 2D (x, z), so stacking players vertically
-	// puts them all into the same streaming cell and every client there streams the whole
-	// cluster of parked bodies at once. Keep every player on a unique XZ spot instead.
-	// Keep the height within sane world bounds: extreme heights (100km+) break position replication.
-	static vector GetInitialEntityPosition(int playerId)
-	{
-		return Vector(
-			1000 * Math.Mod(playerId, 10),
-			10000,
-			1000 * Math.Floor(playerId / 10));
-	}
-
 	void SpawnInitialEntity(int playerId)
 	{
 		#ifdef WORKBENCH
@@ -753,25 +726,19 @@ class PS_GameModeCoop : SCR_BaseGameMode
 			return;
 		#endif
 
-		// The player may have disconnected during the spawn delay (rampant on a busy server with
-		// reconnect churn). Bail before spawning so we neither deref a null controller nor leak a body.
+		PS_VoNRoomsManager VoNRoomsManager = PS_VoNRoomsManager.GetInstance();
+		Resource resource = Resource.Load("{ADDE38E4119816AB}Prefabs/InitialPlayer_Version2.et");
+		EntitySpawnParams params = new EntitySpawnParams();
+		GetTransform(params.Transform);
+		vector position = Vector(0, 100000, 0) + Vector(1000 * Math.Mod(playerId, 10), 5000 * Math.Floor(Math.Mod(playerId, 100) / 10), 5000 * Math.Floor(playerId / 100));
+		params.Transform[3] = position;
+		IEntity initialEntity = GetGame().SpawnEntityPrefab(resource, GetGame().GetWorld(), params);
 		PlayerManager playerManager = GetGame().GetPlayerManager();
 		SCR_PlayerController playerController = SCR_PlayerController.Cast(playerManager.GetPlayerController(playerId));
-		if (!playerController)
-			return;
 		PS_PlayableControllerComponent playableController = PS_PlayableControllerComponent.Cast(playerController.FindComponent(PS_PlayableControllerComponent));
-		if (!playableController)
-			return;
-
-		// Body-less: spawn the player's VoN proxy (menu/spectator voice host) instead of a
-		// controlled InitialPlayer character. The player controls NOTHING in the lobby - the
-		// proxy is an uncontrolled, replicated-to-all entity, not a streaming body.
-		PS_VoNRoomsManager VoNRoomsManager = PS_VoNRoomsManager.GetInstance();
-		if (VoNRoomsManager)
-		{
-			VoNRoomsManager.SpawnProxy_S(playerId);
-			VoNRoomsManager.RestoreRoom(playerId);
-		}
+		playableController.SetInitialEntity(initialEntity);
+		playerController.SetInitialMainEntity(initialEntity);
+		VoNRoomsManager.RestoreRoom(playerId);
 	}
 
 	void TryRespawn(RplId playableId, int playerId)
@@ -857,37 +824,6 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 		playableManager.SetPlayerPlayable(playerId, RplId.Invalid());
 		playableManager.ApplyPlayable(playerId);
-
-		// Body-less spectator: the player keeps their corpse as the controlled entity; tell the owning
-		// client to open the spectator camera + menu (client-local) and move its VoN to the global
-		// channel. See PS_PlayableControllerComponent.RPC_EnterSpectator.
-		SendPlayerToSpectator_S(playerId);
-	}
-
-	// Server: move the player to the global VoN channel and trigger their client-side spectator camera.
-	void SendPlayerToSpectator_S(int playerId)
-	{
-		if (!Replication.IsServer())
-			return;
-
-		PS_VoNRoomsManager vonMgr = PS_VoNRoomsManager.GetInstance();
-		if (vonMgr)
-		{
-			vonMgr.MoveToRoom(playerId, "", "#PS-VoNRoom_Global");
-			// Re-tune every machine's copy of this player's VoN proxy once their death/slot state has
-			// replicated. The immediate ApplyRadioKey inside MoveToRoom can run on receivers before
-			// PS_IsMenuSpeaker(playerId) reads true there (the corpse's IsDead replicates separately), which
-			// would leave the proxy parked = nobody hears the spectator. RestoreRoom re-broadcasts the
-			// channel, re-applying the key on every machine when the state has settled.
-			GetGame().GetCallqueue().CallLater(vonMgr.RestoreRoom, 1500, false, playerId);
-		}
-
-		SCR_PlayerController pc = SCR_PlayerController.Cast(GetGame().GetPlayerManager().GetPlayerController(playerId));
-		if (!pc)
-			return;
-		PS_PlayableControllerComponent ctrl = pc.PS_GetPLayableComponent();
-		if (ctrl)
-			ctrl.EnterSpectatorOwner();
 	}
 
 	// If after m_iReconnectTime player still disconnected release playable
@@ -895,15 +831,10 @@ class PS_GameModeCoop : SCR_BaseGameMode
 	{
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 		PS_EPlayableControllerState state = playableManager.GetPlayerState(playerId);
-		if (state != PS_EPlayableControllerState.Disconected)
-			return;
-		// Don't release a slot a reconnecting player has already re-claimed: their GUID reservation
-		// re-links the slot to a NEW playerId, while this stale id stays "Disconnected". Only release if
-		// this id still actually holds the slot.
-		RplId playable = playableManager.GetPlayableByPlayer(playerId);
-		if (playable != RplId.Invalid() && playableManager.GetPlayerByPlayable(playable) != playerId)
-			return;
-		playableManager.SetPlayerPlayable(playerId, RplId.Invalid());
+		if (state == PS_EPlayableControllerState.Disconected)
+		{
+			playableManager.SetPlayerPlayable(playerId, RplId.Invalid());
+		}
 	}
 
 	override void OnGameStateChanged()
@@ -920,12 +851,6 @@ class PS_GameModeCoop : SCR_BaseGameMode
 		switch (state)
 		{
 			case SCR_EGameModeState.BRIEFING: // Force move to voice rooms
-				// Reserve slots from briefing onward: hold a disconnected player's slot indefinitely so a
-				// reconnect in any phase from briefing returns them to their playable. Previously this hold
-				// only switched on at game start (StartGame), so a disconnect during a long briefing could
-				// release the slot before the player got back.
-				if (Replication.IsServer())
-					m_iReconnectTime = m_iReconnectTimeAfterBriefing;
 				foreach (int playerId : playerIds)
 				{
 					RplId playableId = playableManager.GetPlayableByPlayer(playerId);
@@ -1117,27 +1042,7 @@ class PS_GameModeCoop : SCR_BaseGameMode
 
 	bool GetDisablePlayablesStreaming()
 	{
-		// HARD-DISABLED (flood fix). Force-streaming every playable (rpl.EnableStreaming(false) in
-		// PS_PlayableComponent.AddToListWrap) made all ~128 playables ALWAYS-RELEVANT to all ~78 clients
-		// on the Podval server = the Replication Flooded/Stalled kick storm. Returning false unconditionally
-		// puts playables back on default NDS distance culling (matching the working reference lobbies),
-		// regardless of what the m_bDisablePlayablesStreaming attribute is set to.
-		//
-		// The attribute field is KEPT so QuickTvT's server prefab and the world layers that still set
-		// m_bDisablePlayablesStreaming compile/load with no dangling property. To re-enable later, just
-		// `return m_bDisablePlayablesStreaming;` again. Spectators still see the action via the separate
-		// m_bSpectatorStreamingObserver (GetSpectatorStreamingObserver) per-connection observer path.
-		return false;
-	}
-
-	bool GetSpectatorStreamingObserver()
-	{
-		// HARD-DISABLED. The per-connection MPObserver spectator streaming it gated was removed (see
-		// PS_PlayableControllerComponent "Spectator streaming observer: REMOVED") - it was the only
-		// spectator-streaming mechanism among the reference lobbies (Echo/LiteLobby use none) and the main
-		// remaining Replication Flooded/Stalled lever. Returns false regardless of the attribute; the
-		// m_bSpectatorStreamingObserver field is KEPT only so prefabs/world layers that set it still load.
-		return false;
+		return m_bDisablePlayablesStreaming;
 	}
 
 	bool IsChatDisabled()

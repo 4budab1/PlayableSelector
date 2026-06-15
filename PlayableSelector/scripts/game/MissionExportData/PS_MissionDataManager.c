@@ -40,11 +40,7 @@ class PS_MissionDataManager : ScriptComponent
 	
 	void RegisterVehicle(Vehicle vehicle)
 	{
-		if (!Replication.IsServer())
-			return;
 		RplComponent rplComponent = RplComponent.Cast(vehicle.FindComponent(RplComponent));
-		if (!rplComponent)
-			return; // not replicated (e.g. decoration), nothing to track
 		SCR_EditableVehicleComponent editableVehicleComponent = SCR_EditableVehicleComponent.Cast(vehicle.FindComponent(SCR_EditableVehicleComponent));
 		FactionAffiliationComponent factionAffiliationComponent = FactionAffiliationComponent.Cast(vehicle.FindComponent(FactionAffiliationComponent));
 		SCR_DamageManagerComponent damageManagerComponent = SCR_DamageManagerComponent.Cast(vehicle.FindComponent(SCR_DamageManagerComponent));
