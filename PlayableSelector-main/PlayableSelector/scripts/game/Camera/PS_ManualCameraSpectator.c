@@ -9,10 +9,6 @@ class PS_ManualCameraSpectator : SCR_ManualCamera
 	protected IEntity m_CharacterEntity;
 	protected vector oldTransform[4];
 	protected float m_fDistance;
-	// Bone indices cached per character — string-based GetBoneIndex lookups are
-	// too expensive to run every frame in CameraPositionUpdate.
-	protected int m_iBoneHead = -1;
-	protected int m_iBoneEyeLeft = -1;
 
 	override protected void EOnPostFrame(IEntity owner, float timeSlice)
 	{
@@ -41,10 +37,8 @@ class PS_ManualCameraSpectator : SCR_ManualCamera
 	{
 		ClearCharacterEntity();
 		m_CharacterEntity = characterEntity;
-		m_iBoneHead = -1;
-		m_iBoneEyeLeft = -1;
 		m_bMoveLink = false;
-
+		
 		GetTransform(oldTransform);
 	}
 
@@ -52,9 +46,7 @@ class PS_ManualCameraSpectator : SCR_ManualCamera
 	{
 		ClearCharacterEntity();
 		m_CharacterEntity = characterEntity;
-		m_iBoneHead = -1;
-		m_iBoneEyeLeft = -1;
-
+		
 		m_bMoveLink = false;
 		CameraPositionUpdate();
 		m_bMoveLink = true;
@@ -70,25 +62,23 @@ class PS_ManualCameraSpectator : SCR_ManualCamera
 		characterCameraHandlerComponent.OnAlphatestChange(0);
 	}
 
-	protected bool m_bGameModeNullLogged = false;
+	// Spectator jump-to-coordinates: place the free camera at a raw world position with no entity to
+	// follow. Used when the clicked playable is outside this client's replication pool (default NDS
+	// culling) so there is no local entity for SetCharacterEntity to track - the server sends only the
+	// coordinates. SCR_ManualCamera re-reads the entity transform every frame (ProcessComponents ->
+	// GetLocalTransform), so SetOrigin sticks and manual input continues from the new spot; SetOrigin
+	// also keeps the camera's current orientation.
+	void MoveToPosition(vector pos)
+	{
+		SetCharacterEntity(null);
+		SetOrigin(pos);
+	}
 
 	void CameraPositionUpdate()
 	{
 		vector newTransform[4];
 		GetTransform(newTransform);
 		PS_GameModeCoop gameModeCoop = PS_GameModeCoop.Cast(GetGame().GetGameMode());
-		if (!gameModeCoop)
-		{
-			// Log once only — prevents per-frame log spam when this runs every frame
-			if (!m_bGameModeNullLogged)
-			{
-				PS_DebugLogger.LogError("PS_ManualCameraSpectator.CameraPositionUpdate: gameModeCoop is null — clearing character entity");
-				m_bGameModeNullLogged = true;
-			}
-			SetCharacterEntity(null);
-			return;
-		}
-		m_bGameModeNullLogged = false;
 		if (!SCR_Math3D.MatrixEqual(newTransform, oldTransform) && !gameModeCoop.GetFriendliesSpectatorOnly() && !m_bMoveLink)
 		{
 			SetCharacterEntity(null);
@@ -99,12 +89,8 @@ class PS_ManualCameraSpectator : SCR_ManualCamera
 		SCR_CharacterCameraHandlerComponent characterCameraHandlerComponent = SCR_CharacterCameraHandlerComponent.Cast(character.FindComponent(SCR_CharacterCameraHandlerComponent));
 		characterCameraHandlerComponent.OnAlphatestChange(255);
 
-		if (m_iBoneHead == -1)
-			m_iBoneHead = m_CharacterEntity.GetAnimation().GetBoneIndex("Head");
-		if (m_iBoneEyeLeft == -1)
-			m_iBoneEyeLeft = m_CharacterEntity.GetAnimation().GetBoneIndex("leftEye");
-		int boneHead = m_iBoneHead;
-		int boneEyeLeft = m_iBoneEyeLeft;
+		int boneHead = m_CharacterEntity.GetAnimation().GetBoneIndex("Head");
+		int boneEyeLeft = m_CharacterEntity.GetAnimation().GetBoneIndex("leftEye");
 		vector mat[4];
 		m_CharacterEntity.GetTransform(mat);
 		vector matHead[4];
@@ -136,6 +122,7 @@ class PS_ManualCameraSpectator : SCR_ManualCamera
 			if (m_fDistance > 0.5)
 			{
 				m_fDistance -= 0.5;
+				Print(m_fDistance);
 				vector moveVector = vector.Lerp(origin1, origin1 + originDiff.Normalized() * m_fDistance, GetGame().GetWorld().GetTimeSlice() * 5);
 				newTransform[3] = moveVector;
 				SetTransform(newTransform);

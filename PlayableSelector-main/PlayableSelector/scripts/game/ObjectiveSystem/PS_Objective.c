@@ -37,13 +37,7 @@ class PS_Objective : PS_MissionDescription
 	void SetCompleted(bool completed)
 	{
 		m_bCompleted = completed;
-		Rpc(RPC_SetCompleted, completed);
-		OnObjectiveUpdate();
-	}
-	[RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]
-	void RPC_SetCompleted(bool completed)
-	{
-		m_bCompleted = completed;
+		Replication.BumpMe();
 		OnObjectiveUpdate();
 	}
 

@@ -26,12 +26,6 @@ class PS_BriefingMapMenu: ChimeraMenuBase
 	protected PS_GameModeHeader m_hGameModeHeader;
 	
 	protected Widget m_wSteps;
-
-	// One-shot guard: prevents repeated SwitchToMenu calls when the faction key
-	// changes during the briefing. The faction key can flip between "" and the real
-	// faction for a few frames after JIP or slot assignment; without this guard
-	// the briefing menu flickers or re-opens continuously.
-	protected bool m_bBriefingMenuSwitched = false;
 	
 	// -------------------- Menu events --------------------
 	override void OnMenuOpen()
@@ -54,12 +48,6 @@ class PS_BriefingMapMenu: ChimeraMenuBase
 		m_wVoiceChatList = GetRootWidget().FindAnyWidget("VoiceChatFrame");
 		m_hVoiceChatList = PS_VoiceChatList.Cast(m_wVoiceChatList.FindHandler(PS_VoiceChatList));
 		
-		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
-		PlayerController playerController = GetGame().GetPlayerController();
-		FactionKey playerFactionKey = playableManager.GetPlayerFactionKey(playerController.GetPlayerId());
-		if (m_hVoiceChatList && playerFactionKey != "")
-			m_hVoiceChatList.SwitchFaction(playerFactionKey);
-		
 		m_wGameModeHeader = GetRootWidget().FindAnyWidget("GameModeHeader");
 		m_hGameModeHeader = PS_GameModeHeader.Cast(m_wGameModeHeader.FindHandler(PS_GameModeHeader));
 		
@@ -70,6 +58,7 @@ class PS_BriefingMapMenu: ChimeraMenuBase
 		PS_GameModeCoop gameMode = PS_GameModeCoop.Cast(GetGame().GetGameMode());
 		//m_wSteps.SetVisible(gameMode.GetState() == SCR_EGameModeState.BRIEFING);
 		
+		PlayerController playerController = GetGame().GetPlayerController();
 		PS_PlayableControllerComponent playableController = PS_PlayableControllerComponent.Cast(playerController.FindComponent(PS_PlayableControllerComponent));
 		
 		GetGame().GetInputManager().AddActionListener("VONDirect", EActionTrigger.DOWN, Action_LobbyVoNOn);
@@ -79,6 +68,7 @@ class PS_BriefingMapMenu: ChimeraMenuBase
 		GetGame().GetInputManager().AddActionListener("MenuBack", EActionTrigger.DOWN, Action_Exit);
 		GetGame().GetInputManager().AddActionListener("SwitchVoiceChat", EActionTrigger.DOWN, Action_SwitchVoiceChat);
 		
+		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 		if (playableManager.GetPlayableByPlayer(playerController.GetPlayerId()) != RplId.Invalid())
 			GetRootWidget().FindAnyWidget("PlayableNotSelectedOverlay").SetVisible(false);
 		
@@ -143,14 +133,8 @@ class PS_BriefingMapMenu: ChimeraMenuBase
 		FactionKey factionKey = playableManager.GetPlayerFactionKey(currentPlayerId);
 		PS_PlayableControllerComponent playableControllerComponent = PS_PlayableControllerComponent.Cast(currentPlayerController.FindComponent(PS_PlayableControllerComponent));
 			
-		// Only force a menu switch once per briefing session. The faction key can
-		// oscillate for a few frames during JIP / slot assignment, and without a
-		// one-shot guard SwitchToMenu fires every frame, causing flicker and re-open.
-		if (!m_bBriefingMenuSwitched && m_hVoiceChatList.GetFactionKey() != factionKey)
-		{
-			m_bBriefingMenuSwitched = true;
+		if (m_hVoiceChatList.GetFactionKey() != factionKey)
 			playableControllerComponent.SwitchToMenu(SCR_EGameModeState.BRIEFING);
-		}
 		
 		// Update playable marker
 		/*
@@ -187,13 +171,6 @@ class PS_BriefingMapMenu: ChimeraMenuBase
 	
 	override void OnMenuClose()
 	{
-		// Reset the one-shot guard so the next briefing can switch properly
-		m_bBriefingMenuSwitched = false;
-
-		PlayerController playerController = GetGame().GetPlayerController();
-		PS_PlayableControllerComponent playableController = PS_PlayableControllerComponent.Cast(playerController.FindComponent(PS_PlayableControllerComponent));
-		playableController.LobbyVoNDisableImmediate();
-
 		if (m_MapEntity)
 			m_MapEntity.CloseMap();
 		

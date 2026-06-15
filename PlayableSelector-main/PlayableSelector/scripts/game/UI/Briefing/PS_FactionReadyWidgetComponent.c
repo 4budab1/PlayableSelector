@@ -34,7 +34,7 @@ class PS_FactionReadyWidgetComponent : PS_HideableButton
 		m_sCurrentFactionKey = m_PlayableManager.GetPlayerFactionKey(m_iCurrentPlayerId);
 		m_CurrentPlayableControllerComponent = PS_PlayableControllerComponent.Cast(m_CurrentPlayerController.FindComponent(PS_PlayableControllerComponent));
 		
-		m_PlayableManager.GetOnFactionReadyChanged().Insert(UpdateFaction);
+		m_PlayableManager.m_eFactionReadyChanged.Insert(UpdateFaction);
 		
 		m_wButton.SetVisible(false);
 	}
@@ -97,6 +97,6 @@ class PS_FactionReadyWidgetComponent : PS_HideableButton
 	override void HandlerDeattached(Widget w)
 	{
 		if (m_PlayableManager)
-			m_PlayableManager.GetOnFactionReadyChanged().Remove(UpdateFaction);
+			m_PlayableManager.m_eFactionReadyChanged.Remove(UpdateFaction);
 	}
 }

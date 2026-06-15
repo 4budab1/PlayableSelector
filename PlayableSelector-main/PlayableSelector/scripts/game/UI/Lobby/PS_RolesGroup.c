@@ -266,7 +266,7 @@ class PS_RolesGroup : SCR_ScriptedWidgetComponent
 			{
 				if (playerId == -2)
 				{
-					m_PlayableControllerComponent.SetSlotLockState(playable.GetRplId(), false);
+					m_PlayableControllerComponent.SetPlayablePlayer(playable.GetRplId(), -1);
 				}
 			}
 			else
@@ -276,7 +276,7 @@ class PS_RolesGroup : SCR_ScriptedWidgetComponent
 					PS_EPlayableControllerState state = m_PlayableManager.GetPlayerState(playerId);
 					if (state == PS_EPlayableControllerState.Ready)
 						m_PlayableControllerComponent.SetPlayerState(playerId, PS_EPlayableControllerState.NotReady);
-					m_PlayableControllerComponent.SetSlotLockState(playable.GetRplId(), true);
+					m_PlayableControllerComponent.SetPlayablePlayer(playable.GetRplId(), -2);
 				}
 			}
 		}

@@ -13,7 +13,7 @@ class PS_MissionDescriptionObjectivesListUI : ScriptedWidgetComponent
 		if (!GetGame().InPlayMode())
 			return;
 		m_wRoot = w;
-		GetGame().GetCallqueue().CallLater(FillList, 0, false);
+		GetGame().GetCallqueue().CallLater(FillList, false, 0);
 	}
 	
 	void FillList()

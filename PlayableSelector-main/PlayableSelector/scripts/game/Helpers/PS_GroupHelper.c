@@ -49,8 +49,8 @@ class PS_GroupHelper
 	static string GroupCallsignToGroupName(SCR_Faction faction, int groupCallSign)
 	{
 		int companyCallsignIndex, platoonCallsignIndex, squadCallsignIndex;
-		companyCallsignIndex = groupCallSign / 1000000;
-		platoonCallsignIndex = (groupCallSign % 1000000) / 1000;
+		companyCallsignIndex = groupCallSign * 0.000001;
+		platoonCallsignIndex = (groupCallSign % 1000000) * 0.001;
 		squadCallsignIndex = (groupCallSign % 1000) / 1;
 
 		if (!faction)

@@ -150,7 +150,7 @@ class PS_LobbyLoadoutPreview : SCR_WLibComponentBase
 	void CloseInventory()
 	{
 		m_PlayableVehicleContainerInventory = null;
-		m_iPlayableIdInventory = RplId.Invalid();
+		m_iPlayableIdInventory = null;
 		m_hLittleInventory.Clear();
 		m_hLittleInventory.GetRootWidget().SetVisible(false);
 	}
@@ -277,8 +277,7 @@ class PS_LobbyLoadoutPreview : SCR_WLibComponentBase
 		
 		// Current playable player, or dead if playable already dead.
 		int playerId = playableManager.GetPlayerByPlayable(m_iPlayableId);
-		bool isDestroyed = playableManager.IsSlotCharacterDestroyed(m_iPlayableId);
-		if (isDestroyed) 
+		if (character.GetDamageManager().IsDestroyed()) 
 		{
 			m_WStateOverlay.SetVisible(true);
 			m_wStateText.SetText("Dead");

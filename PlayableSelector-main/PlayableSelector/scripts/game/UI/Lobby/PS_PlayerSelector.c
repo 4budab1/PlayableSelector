@@ -117,8 +117,7 @@ class PS_PlayerSelector : SCR_ButtonBaseComponent
 		RplId playableId = m_PlayableManager.GetPlayableByPlayer(m_iPlayerId);
 		m_VoiceHideableButton.SetPlayer(playerId);
 		
-		if (m_wImageCurrent && m_CoopLobby)
-			m_wImageCurrent.SetVisible(playerId == m_CoopLobby.GetSelectedPlayer());
+		m_wImageCurrent.SetVisible(playerId == m_CoopLobby.GetSelectedPlayer());
 		//m_wKickButton.SetVisible(playerId != m_iCurrentPlayerId && PS_PlayersHelper.IsAdminOrServer());
 		UpdatePlayerName(playerId);
 		UpdatePlayerFaction(playerId, factionKey, factionKey);
@@ -204,7 +203,7 @@ class PS_PlayerSelector : SCR_ButtonBaseComponent
 		
 		UpdateColor();
 		
-		if (state == PS_EPlayableControllerState.Disconnected)
+		if (state == PS_EPlayableControllerState.Disconected)
 			RemovePlayer(playerId);
 	}
 	
@@ -236,21 +235,16 @@ class PS_PlayerSelector : SCR_ButtonBaseComponent
 		if (playerId != m_iPlayerId)
 			return;
 		
-		if (m_wRoot)
-			m_wRoot.RemoveFromHierarchy();
-		// m_PlayersList/m_CoopLobby can be null when RemovePlayer fires from
-		// SetPlayer -> UpdatePlayerState during lobby init (stale Disconnected state).
-		if (m_PlayersList)
-			m_PlayersList.OnPlayerRemoved(m_iPlayerId);
-		if (m_CoopLobby)
-			m_CoopLobby.OnPlayerRemoved(m_iPlayerId);
+		m_wRoot.RemoveFromHierarchy();
+		m_PlayersList.OnPlayerRemoved(m_iPlayerId);
+		m_CoopLobby.OnPlayerRemoved(m_iPlayerId);
 	}
 	
 	// --------------------------------------------------------------------------------------------------------------------------------
 	// Etc
 	void UpdateColor()
 	{
-		if (m_iState == PS_EPlayableControllerState.Disconnected)
+		if (m_iState == PS_EPlayableControllerState.Disconected)
 			m_wPlayerName.SetColor(m_DeathColor);
 		else if (m_iState == PS_EPlayableControllerState.Ready)
 			m_wPlayerName.SetColor(m_ReadyColor);
@@ -291,7 +285,7 @@ class PS_PlayerSelector : SCR_ButtonBaseComponent
 		if (!PS_PlayersHelper.IsAdminOrServer())
 			return;
 		
-		if (m_CoopLobby && m_iPlayerId != m_CoopLobby.GetSelectedPlayer())
+		if (m_iPlayerId != m_CoopLobby.GetSelectedPlayer())
 			m_CoopLobby.SetSelectedPlayer(m_iPlayerId);
 	}
 	

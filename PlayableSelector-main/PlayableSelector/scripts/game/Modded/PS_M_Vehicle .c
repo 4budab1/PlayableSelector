@@ -38,11 +38,8 @@ modded class Vehicle
 	
 	void RegisterToMissionDate()
 	{
-		// Freeze() scheduling removed: its velocity-zeroing body is commented out,
-		// so the repeating 0ms CallLater ran a no-op every frame for every frozen
-		// vehicle (20+ per-frame callbacks on a typical mission). Freeze-time
-		// movement blocking is handled by PS_PlayableControllerComponent.EOnFrame
-		// via the action manager and by the wheel brake below.
+		if (!m_bEnableMoveOnFreeze)
+			GetGame().GetCallqueue().CallLater(Freeze, 0, true);
 		VehicleWheeledSimulation vehicleWheeledSimulation = VehicleWheeledSimulation.Cast(FindComponent(VehicleWheeledSimulation));
 		if (vehicleWheeledSimulation)
 		{
@@ -55,7 +52,7 @@ modded class Vehicle
 			SCR_AIGroup group = SCR_AIGroup.Cast(GetGame().GetWorld().FindEntityByName(m_sAttachmentGroupName));
 			if (group)
 			{
-				RplId id = Replication.FindItemId(this);
+				RplId id = Replication.FindId(this);
 				playableManager.RegisterGroupVehicle(id, group, this);
 			}
 		}
@@ -71,7 +68,7 @@ modded class Vehicle
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 		if (playableManager)
 		{
-			RplId id = Replication.FindItemId(this);
+			RplId id = Replication.FindId(this);
 			playableManager.UnRegisterGroupVehicle(id);
 		}
 	}

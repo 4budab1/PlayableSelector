@@ -14,10 +14,8 @@ class PS_GroupAttachmentComponent : ScriptComponent
 			GetGame().GetCallqueue().Call(RegisterToMissionDate);
 	}
 	
-	protected int m_iRegisterRetryCount = 0;
-
 	void RegisterToMissionDate()
-	{
+	{		
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 		if (playableManager)
 		{
@@ -25,16 +23,10 @@ class PS_GroupAttachmentComponent : ScriptComponent
 			if (group)
 			{
 				RplComponent rplComponent = RplComponent.Cast(GetOwner().FindComponent(RplComponent));
-				if (!rplComponent)
-					return;
 				RplId id = rplComponent.Id();
 				if (!id.IsValid())
 				{
-					// Bounded delayed retry — the old 0ms unbounded re-queue spammed
-					// the call queue forever for entities that never get a valid RplId.
-					m_iRegisterRetryCount++;
-					if (m_iRegisterRetryCount <= 10)
-						GetGame().GetCallqueue().CallLater(RegisterToMissionDate, 100, false);
+					GetGame().GetCallqueue().Call(RegisterToMissionDate);
 					return;
 				}
 				playableManager.RegisterGroupVehicle(id, group, GetOwner());
@@ -47,7 +39,7 @@ class PS_GroupAttachmentComponent : ScriptComponent
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 		if (playableManager)
 		{
-			RplId id = Replication.FindItemId(GetOwner());
+			RplId id = Replication.FindId(GetOwner());
 			playableManager.UnRegisterGroupVehicle(id);
 		}
 	}

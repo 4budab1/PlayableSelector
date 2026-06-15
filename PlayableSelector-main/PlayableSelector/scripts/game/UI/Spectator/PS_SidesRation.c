@@ -13,7 +13,7 @@ class PS_SidesRation : SCR_ScriptedWidgetComponent
 		
 		PS_PlayableManager playableManager = PS_PlayableManager.GetInstance();
 		if (playableManager)
-			playableManager.GetOnFactionChange().Insert(UpdateInfo);
+			playableManager.m_eOnFactionChange.Insert(UpdateInfo);
 		
 		UpdateInfo(0, "", "");	
 	}

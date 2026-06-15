@@ -23,8 +23,7 @@ class PS_FreezeTimeCounter : SCR_ScriptedWidgetComponent
 		if (m_fFullFreezeTime == 0)
 			return;
 		
-		// Echo Lobby pattern: decrement by 1000ms per tick (called every 1000ms via CallLater)
-		m_fFullFreezeTimeCurrent -= 1000;
+		m_fFullFreezeTimeCurrent -= GetGame().GetWorld().GetTimeSlice() * 1000;
 		float percent = ((float)m_fFullFreezeTimeCurrent) / m_fFullFreezeTime;
 		if (percent < 0)
 			percent = 0;
@@ -42,9 +41,7 @@ class PS_FreezeTimeCounter : SCR_ScriptedWidgetComponent
 		if (m_fFullFreezeTime == 0)
 		{
 			m_fFullFreezeTime = time;
-			// Echo Lobby pattern: sync every 1000ms instead of per-frame.
-			// Reduces CPU overhead during replication snapshot processing.
-			GetGame().GetCallqueue().CallLater(Update, 1000, true);
+			GetGame().GetCallqueue().CallLater(Update, 0, true);
 		}
 		
 		

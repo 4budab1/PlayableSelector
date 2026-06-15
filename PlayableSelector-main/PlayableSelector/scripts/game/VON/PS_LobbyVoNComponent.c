@@ -126,11 +126,4 @@ class PS_LobbyVoNComponent : VoNComponent
 		
 		m_ScriptInvokerOnReceiveEnd.Invoke(playerId);
 	}
-
-	void CleanupPlayer(int playerId)
-	{
-		GetGame().GetCallqueue().Remove(AwaitReceiveEnd);
-		m_fPlayerSpeachReciveTime.Remove(playerId);
-		m_fPlayerSpeachReciveIsChannel.Remove(playerId);
-	}
 };

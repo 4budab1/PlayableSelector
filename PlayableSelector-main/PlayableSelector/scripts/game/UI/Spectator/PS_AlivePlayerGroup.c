@@ -50,41 +50,19 @@ class PS_AlivePlayerGroup : SCR_ScriptedWidgetComponent
 		m_AlivePlayerList = alivePlayerList;
 	}
 	
-	void SetAIGroup(SCR_AIGroup aiGroup, PS_PlayableContainer playable = null)
+	void SetAIGroup(SCR_AIGroup aiGroup)
 	{
 		m_AIGroup = aiGroup;
 		
-		// Init: group name from AI group, or fallback for ungrouped playables
+		// Init
 		string groupName = PS_GroupHelper.GetGroupFullName(m_AIGroup);
-		if (groupName == "" && playable)
-			groupName = playable.GetName();
-		if (groupName == "")
-			groupName = "Ungrouped";
 		m_wGroupName.SetText(groupName);
-
-		// Resolve faction: try AI group first, then playable (replicated slot data),
-		// then FactionManager by key. The AI group's GetFaction() depends on the
-		// entity being within replication range (~1500m); the slot's faction key
-		// is always available from the replicated slot data.
-		Faction faction = null;
-		if (m_AIGroup)
-			faction = m_AIGroup.GetFaction();
-		if (!faction && playable)
-		{
-			faction = playable.GetFaction();
-			if (!faction)
-			{
-				SCR_FactionManager fm = SCR_FactionManager.Cast(GetGame().GetFactionManager());
-				if (fm)
-					faction = SCR_Faction.Cast(fm.GetFactionByKey(playable.GetFactionKey()));
-			}
-		}
-
-		if (faction)
-		{
-			Color factionColor = faction.GetFactionColor();
-			m_wGroupFactionColor.SetColor(factionColor);
-		}
+		if (!m_AIGroup)
+			return;
+		Faction faction = m_AIGroup.GetFaction();
+		
+		Color factionColor = faction.GetFactionColor();
+		m_wGroupFactionColor.SetColor(factionColor);
 	}
 	
 	void InsertPlayable(PS_PlayableContainer playable)
@@ -94,7 +72,7 @@ class PS_AlivePlayerGroup : SCR_ScriptedWidgetComponent
 		alivePlayerSelector.SetAliveGroup(this);
 		alivePlayerSelector.SetSpectatorMenu(m_SpectatorMenu);
 		alivePlayerSelector.SetAlivePlayerList(m_AlivePlayerList);
-		alivePlayerSelector.SetPlayableContainer(playable);
+		alivePlayerSelector.SetPlayable(playable.GetRplId());
 	}
 	
 	void OnAliveRemoved(PS_PlayableContainer playableComponent)

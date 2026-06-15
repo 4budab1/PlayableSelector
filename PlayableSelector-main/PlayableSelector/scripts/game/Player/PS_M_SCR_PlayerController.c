@@ -9,7 +9,7 @@ modded class SCR_PlayerController
 		m_PS_PlayableControllerComponent = PS_PlayableControllerComponent.Cast(owner.FindComponent(PS_PlayableControllerComponent));
 	}
 	
-	PS_PlayableControllerComponent PS_GetPlayableComponent()
+	PS_PlayableControllerComponent PS_GetPLayableComponent()
 	{
 		return m_PS_PlayableControllerComponent;
 	}

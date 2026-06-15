@@ -19,7 +19,7 @@ class PS_FactionReadyListWidgetComponent : SCR_ScriptedWidgetComponent
 		m_wFactionReadyFactions = HorizontalLayoutWidget.Cast(w.FindAnyWidget("FactionReadyFactions"));
 		
 		if (m_PlayableManager)
-			m_PlayableManager.GetOnFactionChange().Insert(FillFactions);
+			m_PlayableManager.m_eOnFactionChange.Insert(FillFactions);
 		
 		FillFactions(0, "", "");	
 	}
@@ -60,6 +60,6 @@ class PS_FactionReadyListWidgetComponent : SCR_ScriptedWidgetComponent
 	override void HandlerDeattached(Widget w)
 	{
 		if (m_PlayableManager)
-			m_PlayableManager.GetOnFactionChange().Remove(FillFactions);
+			m_PlayableManager.m_eOnFactionChange.Remove(FillFactions);
 	}
 }

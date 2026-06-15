@@ -161,28 +161,6 @@ class PS_SpectatorLabelIcon : SCR_ScriptedWidgetComponent
 	
 	void UpdateLabel()
 	{
-		if (!m_eEntity)
-			return;
-
-		SCR_ChimeraCharacter character = SCR_ChimeraCharacter.Cast(m_eEntity);
-		if (!character)
-			return;
-
-		SCR_CharacterControllerComponent controller = SCR_CharacterControllerComponent.Cast(character.FindComponent(SCR_CharacterControllerComponent));
-		if (!controller)
-			return;
-
-		string name = character.GetName();
-		if (name == "")
-			name = "Unknown";
-
-		if (controller.IsDead())
-			m_wSpectatorLabelText.SetColor(Color.FromInt(0xFF2c2c2c));
-		else if (controller.IsUnconscious())
-			m_wSpectatorLabelText.SetColor(Color.FromInt(0xFFFFAA00));
-		else
-			m_wSpectatorLabelText.SetColor(Color.White);
-
-		m_wSpectatorLabelText.SetText(name);
+		
 	}
 }

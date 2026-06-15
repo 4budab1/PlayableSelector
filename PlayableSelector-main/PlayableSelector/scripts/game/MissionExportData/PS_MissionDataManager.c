@@ -40,13 +40,11 @@ class PS_MissionDataManager : ScriptComponent
 	
 	void RegisterVehicle(Vehicle vehicle)
 	{
-		if (!vehicle)
+		if (!Replication.IsServer())
 			return;
 		RplComponent rplComponent = RplComponent.Cast(vehicle.FindComponent(RplComponent));
-		// Some mission-spawned vehicles have no RplComponent — without this guard
-		// world load throws a VM exception per such vehicle.
 		if (!rplComponent)
-			return;
+			return; // not replicated (e.g. decoration), nothing to track
 		SCR_EditableVehicleComponent editableVehicleComponent = SCR_EditableVehicleComponent.Cast(vehicle.FindComponent(SCR_EditableVehicleComponent));
 		FactionAffiliationComponent factionAffiliationComponent = FactionAffiliationComponent.Cast(vehicle.FindComponent(FactionAffiliationComponent));
 		SCR_DamageManagerComponent damageManagerComponent = SCR_DamageManagerComponent.Cast(vehicle.FindComponent(SCR_DamageManagerComponent));
@@ -170,7 +168,7 @@ class PS_MissionDataManager : ScriptComponent
 		if (m_playerSaved.Contains(playerId))
 			return;
 		
-		string GUID = GetGame().GetBackendApi().GetPlayerPlatformId(playerId);
+		string GUID = GetGame().GetBackendApi().GetPlayerIdentityId(playerId);
 		string name = m_PlayerManager.GetPlayerName(playerId);
 		
 		PS_MissionDataPlayer player = new PS_MissionDataPlayer();
@@ -226,8 +224,7 @@ class PS_MissionDataManager : ScriptComponent
 			descriptionData.Title = description.m_sTitle;
 			descriptionData.DescriptionLayout = description.m_sDescriptionLayout;
 			descriptionData.TextData = description.m_sTextData;
-			foreach (FactionKey factionKey, bool visible : description.GetVisibleForFactionsRaw())
-				descriptionData.VisibleForFactions.Insert(factionKey);
+			descriptionData.VisibleForFactions = description.m_aVisibleForFactions;
 			descriptionData.EmptyFactionVisibility = description.m_bEmptyFactionVisibility;
 		}
 		
@@ -360,7 +357,7 @@ class PS_MissionDataManager : ScriptComponent
 	
 	void WriteToFile()
 	{
-		JsonSaveContext missionSaveContext = new JsonSaveContext();
+		SCR_JsonSaveContext missionSaveContext = new SCR_JsonSaveContext();
 		missionSaveContext.WriteValue("", m_Data);
 		string fileName = string.Format("$profile:Sessions\\PS_MissionData_%1.json", System.GetUnixTime().ToString());
 		missionSaveContext.SaveToFile(fileName);

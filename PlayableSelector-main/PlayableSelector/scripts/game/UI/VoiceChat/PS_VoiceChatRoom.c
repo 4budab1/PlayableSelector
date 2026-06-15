@@ -6,18 +6,15 @@ class PS_VoiceChatRoom : SCR_ScriptedWidgetComponent
 	// Global cached
 	protected PlayerManager m_gPlayerManager;
 	protected PS_PlayableManager m_gPlayableManager;
-	protected PS_VoNChannelsManager m_gVoNChannelsManager;
+	protected PS_VoNRoomsManager m_gVoNRoomsManager;
 	
 	// Local
-	int m_iRoomId;
+	string m_sChannelKey;
 	PS_VoiceRoomHeader m_hRoomHandler;
 	VerticalLayoutWidget m_wPlayersVerticalLayout;
 	ref map<int, PS_PlayerVoiceSelector> m_mPlayers = new map<int, PS_PlayerVoiceSelector>;
 	
 	int m_iSelectedPlayer = -1;
-	// Tracks the last known channel key so UpdateInfo can detect when a placeholder
-	// room name (empty) resolves to the real name via RPC_InitChannel.
-	protected string m_sLastKnownChannelKey = "";
 	
 	override void HandlerAttached(Widget w)
 	{
@@ -29,7 +26,7 @@ class PS_VoiceChatRoom : SCR_ScriptedWidgetComponent
 		// global
 		m_gPlayerManager   = GetGame().GetPlayerManager();
 		m_gPlayableManager = PS_PlayableManager.GetInstance();
-		m_gVoNChannelsManager = PS_VoNChannelsManager.GetInstance();
+		m_gVoNRoomsManager = PS_VoNRoomsManager.GetInstance();
 		
 		// local
 		m_hRoomHandler = PS_VoiceRoomHeader.Cast(w.FindAnyWidget("VoiceRoomHeader").FindHandler(PS_VoiceRoomHeader));
@@ -38,14 +35,6 @@ class PS_VoiceChatRoom : SCR_ScriptedWidgetComponent
 	
 	void UpdateInfo()
 	{
-		// Refresh room name in case the placeholder empty name resolved to the real
-		// channel key via RPC_InitChannel (common JIP/race condition). Without this,
-		// rooms created with an empty name show "Room not registered on server" forever.
-		string currentKey = m_gVoNChannelsManager.GetRoomName(m_iRoomId);
-		if (currentKey != "" && currentKey != m_sLastKnownChannelKey)
-		{
-			SetRoomId(m_iRoomId);
-		}
 		m_hRoomHandler.UpdateInfo();
 		foreach (int playerId, PS_PlayerVoiceSelector playerVoiceSelector : m_mPlayers)
 		{
@@ -53,48 +42,36 @@ class PS_VoiceChatRoom : SCR_ScriptedWidgetComponent
 		}
 	}
 	
-	void SetRoomId(int roomId, string forcedRoomKey = "")
+	void SetChannelKey(string channelKey)
 	{
-		m_iRoomId = roomId;
-		
-		string roomName = forcedRoomKey;
-		if (roomName == "")
-			roomName = m_gVoNChannelsManager.GetRoomName(roomId);
-		m_sLastKnownChannelKey = roomName;
+		m_sChannelKey = channelKey;
+
+		string roomName = channelKey; // the channel key IS the room key
 		FactionKey factionKey = "";
 		if (roomName == "") roomName = "Room not registered on server";
 		else {
 			array<string> outTokens = new array<string>();
 			roomName.Split("|", outTokens, false);
-			if (outTokens.Count() >= 2)
-			{
-				factionKey = outTokens[0];
-				roomName = outTokens[1];
-			}
+			factionKey = outTokens[0];
+			roomName = outTokens[1];
 		}
 		SCR_FactionManager factionManager = SCR_FactionManager.Cast(GetGame().GetFactionManager());
 		SCR_Faction faction = SCR_Faction.Cast(factionManager.GetFactionByKey(factionKey));
-		m_hRoomHandler.SetRoomName(faction, roomName, roomId);
+		m_hRoomHandler.SetRoomName(faction, roomName, channelKey);
 	}
 	
 	void AddPlayer(int playerId)
 	{
 		if (m_mPlayers.Contains(playerId))
 			return;
-
+		
 		Widget playerSelector = GetGame().GetWorkspace().CreateWidgets(m_sPlayerVoiceSelectorPrefab);
 		PS_PlayerVoiceSelector handler = PS_PlayerVoiceSelector.Cast(playerSelector.FindHandler(PS_PlayerVoiceSelector));
-
+		
 		m_mPlayers[playerId] = handler;
-
+		
 		handler.SetPlayer(playerId);
 		m_wPlayersVerticalLayout.AddChild(playerSelector);
-	}
-
-	// Public query for PS_VoiceChatList.SyncRoomPlayers to avoid duplicate adds.
-	bool HasPlayer(int playerId)
-	{
-		return m_mPlayers.Contains(playerId);
 	}
 	
 	void RemovePlayer(int playerId)
