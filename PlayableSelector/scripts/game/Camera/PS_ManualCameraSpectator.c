@@ -62,6 +62,18 @@ class PS_ManualCameraSpectator : SCR_ManualCamera
 		characterCameraHandlerComponent.OnAlphatestChange(0);
 	}
 
+	// Spectator jump-to-coordinates: place the free camera at a raw world position with no entity to
+	// follow. Used when the clicked playable is outside this client's replication pool (default NDS
+	// culling) so there is no local entity for SetCharacterEntity to track - the server sends only the
+	// coordinates. SCR_ManualCamera re-reads the entity transform every frame (ProcessComponents ->
+	// GetLocalTransform), so SetOrigin sticks and manual input continues from the new spot; SetOrigin
+	// also keeps the camera's current orientation.
+	void MoveToPosition(vector pos)
+	{
+		SetCharacterEntity(null);
+		SetOrigin(pos);
+	}
+
 	void CameraPositionUpdate()
 	{
 		vector newTransform[4];

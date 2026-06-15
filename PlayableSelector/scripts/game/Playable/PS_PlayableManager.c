@@ -52,7 +52,17 @@ class PS_PlayableManager : ScriptComponent
 	ref map<int, string> m_playersLastName = new map<int, string>(); // playerid to player name (persistant)
 	ref map<FactionKey, int> m_mFactionReady = new map<FactionKey, int>(); // faction ready state
 	ref map<RplId, string> m_mPlayablePrefabs = new map<RplId, string>();
-	ref map<RplId, string> m_mPlayableNames = new map<RplId, string>();
+	// Role display info keyed by PREFAB (deduplicated - many playables share a role prefab), instead of
+	// shipping the same long icon path/name on all 128 containers.
+	ref map<string, string> m_mPrefabRoleIcon = new map<string, string>();
+	ref map<string, string> m_mPrefabRoleQuad = new map<string, string>();
+	ref map<string, string> m_mPrefabRoleName = new map<string, string>();
+
+	// Server-only reconnect cache, keyed by player GUID (a reconnecting player gets a NEW playerId,
+	// so all the playerId-keyed state above is lost - this lets us restore faction/slot/pin).
+	protected ref map<string, RplId> m_mReconnectPlayable = new map<string, RplId>();
+	protected ref map<string, FactionKey> m_mReconnectFaction = new map<string, FactionKey>();
+	protected ref map<string, bool> m_mReconnectPin = new map<string, bool>();
 
 	// Invokers
 	ref ScriptInvokerInt m_eOnPlayerConnected = new ScriptInvokerInt();
@@ -235,41 +245,45 @@ class PS_PlayableManager : ScriptComponent
 		}
 
 		IEntity entity;
-		if (playableId == RplId.Invalid()) { // switch to null entity
-			// Remove group and faction
+		if (playableId == RplId.Invalid()) { // no slot: lobby / spectator
+			// Body-less: control NOTHING. Lobby players never had a body; a just-died player keeps
+			// their corpse as the controlled entity. The client spectator camera (PS_SpectatorManager)
+			// and the VoN proxy (PS_MenuVoN) handle view + voice. The engine has no working
+			// SetControlledEntity(null), so we simply do not assign a controlled entity here.
 			SCR_AIGroup currentGroup = groupsManagerComponent.GetPlayerGroup(playableId);
 			if (currentGroup)
 				currentGroup.RemovePlayer(playerId);
 			SetPlayerFactionKey(playerId, "");
-
-			// Create new entity if need
-			entity = playableController.GetInitialEntity();
-			if (!entity)
-			{
-				Resource resource = Resource.Load("{ADDE38E4119816AB}Prefabs/InitialPlayer_Version2.et");
-				EntitySpawnParams params = new EntitySpawnParams();
-				entity = GetGame().SpawnEntityPrefab(resource, GetGame().GetWorld(), params);
-				playableController.SetInitialEntity(entity);
-			}
-
-			// Apply entity
-			playerController.SetInitialMainEntity(entity);
 			return;
-		} else
-			entity = GetPlayableById(playableId).GetPlayableComponent().GetOwner();
+		} else {
+			PS_PlayableContainer applyContainer = GetPlayableById(playableId);
+			PS_PlayableComponent applyPlayable;
+			if (applyContainer)
+				applyPlayable = applyContainer.GetPlayableComponent();
+			if (!applyPlayable || !applyPlayable.GetOwner())
+				return; // stale link, playable entity is already gone
+			entity = applyPlayable.GetOwner();
+		}
 
 		// Delete initial entity if exists
 		IEntity initialEntity = playableController.GetInitialEntity();
 		if (initialEntity)
 			m_CallQueue.Call(SCR_EntityHelper.DeleteEntityAndChildren, initialEntity);
 
-		// Apply entity
+		// Apply entity immediately. At game start / respawn the playables have been force-streamed all
+		// through the briefing, so the control switch is not a streaming burst and the player should take
+		// control with no delay. The spectator transitions stage their streaming separately via the
+		// deferred spectator observer, so no preload handshake is needed on this slot-apply path.
 		playerController.SetInitialMainEntity(entity);
 
 		// Set new player faction
 		SCR_ChimeraCharacter playableCharacter = SCR_ChimeraCharacter.Cast(entity);
-		SCR_Faction faction = SCR_Faction.Cast(playableCharacter.GetFaction());
-		SetPlayerFactionKey(playerId, faction.GetFactionKey());
+		if (playableCharacter)
+		{
+			SCR_Faction faction = SCR_Faction.Cast(playableCharacter.GetFaction());
+			if (faction)
+				SetPlayerFactionKey(playerId, faction.GetFactionKey());
+		}
 
 		// Requred delay, since entity take one frame to apply controls
 		m_CallQueue.CallLater(ChangeGroup, 0, false, playerId, playableId);
@@ -336,8 +350,11 @@ class PS_PlayableManager : ScriptComponent
 		PS_PlayableContainer container = playableComponent.GetPlayableContainer();
 		RPC_RegisterPlayable(container);
 		Rpc(RPC_RegisterPlayable, container);
-		SetPlayablePrefab(playableId, playableComponent.GetOwner().GetPrefabData().GetPrefabName());
-		SetPlayableName(playableId, playableComponent.GetName());
+		string prefab = playableComponent.GetOwner().GetPrefabData().GetPrefabName();
+		SetPlayablePrefab(playableId, prefab);
+		// Role icon/name are static per prefab - stored once per prefab instead of on every container
+		SetPrefabRoleInfo(prefab, playableComponent.GetRoleIconPath(), playableComponent.GetRoleIconQuad(), playableComponent.GetRoleName());
+		// Name is carried by the container itself, no separate replicated map needed
 
 		// Server side
 		if (Replication.IsServer())
@@ -569,6 +586,85 @@ class PS_PlayableManager : ScriptComponent
 		m_eOnFactionChange.Invoke(playerId, factionKey, factionKeyOld);
 	}
 
+	// ------------------------------------- Reconnect restore -----------------------------------------
+	// A reconnecting player is assigned a NEW playerId, so every playerId-keyed map above is empty for
+	// them. Vanilla SCR_ReconnectComponent restores the controlled character but sets the faction
+	// affiliation from that entity - which is the factionless lobby/VoN body during preview/lobby/
+	// briefing - leaving the player with an empty faction and therefore the WRONG side's map markers.
+	// We cache the relevant state by GUID on disconnect and re-apply it on reconnect.
+	// - Execute ONLY on server
+	void StorePlayerReconnectData(int playerId)
+	{
+		if (!Replication.IsServer())
+			return;
+		string guid = GetGame().GetBackendApi().GetPlayerIdentityId(playerId);
+		if (guid == "")
+			return;
+		FactionKey faction = GetPlayerFactionKey(playerId);
+		RplId playable = GetPlayableByPlayer(playerId);
+		if (faction == "" && playable == RplId.Invalid())
+			return; // nothing worth restoring (player never slotted/picked a faction)
+		m_mReconnectPlayable[guid] = playable;
+		m_mReconnectFaction[guid] = faction;
+		m_mReconnectPin[guid] = GetPlayerPin(playerId);
+	}
+	// - Execute ONLY on server
+	void ClearPlayerReconnectData(int playerId)
+	{
+		if (!Replication.IsServer())
+			return;
+		string guid = GetGame().GetBackendApi().GetPlayerIdentityId(playerId);
+		if (guid == "")
+			return;
+		m_mReconnectPlayable.Remove(guid);
+		m_mReconnectFaction.Remove(guid);
+		m_mReconnectPin.Remove(guid);
+	}
+	// - Execute ONLY on server
+	void RestorePlayerReconnectData(int playerId)
+	{
+		if (!Replication.IsServer())
+			return;
+		string guid = GetGame().GetBackendApi().GetPlayerIdentityId(playerId);
+		if (guid == "" || !m_mReconnectFaction.Contains(guid))
+			return;
+
+		RplId playable = m_mReconnectPlayable[guid];
+		FactionKey faction = m_mReconnectFaction[guid];
+		bool pin = m_mReconnectPin[guid];
+
+		// Consume so a later fresh join by the same account does not pick up stale state
+		m_mReconnectPlayable.Remove(guid);
+		m_mReconnectFaction.Remove(guid);
+		m_mReconnectPin.Remove(guid);
+
+		// Re-link the slot only if it is still theirs / free / held by a now-gone ghost id,
+		// never steal a slot a live player has taken in the meantime
+		if (playable != RplId.Invalid() && GetPlayableById(playable))
+		{
+			int holder = GetPlayerByPlayable(playable);
+			bool free = holder <= 0 || holder == playerId || !m_PlayerManager.IsPlayerConnected(holder);
+			if (free)
+				SetPlayerPlayable(playerId, playable);
+		}
+
+		// Re-apply faction so markers match the player's side again
+		if (faction != "")
+			SetPlayerFactionKey(playerId, faction);
+
+		if (pin)
+			SetPlayerPin(playerId, true);
+
+		// If reconnecting mid-GAME into a re-linked slot, put the player back INTO their playable
+		// (ApplyPlayable controls it; a dead slot routes to spectator). In lobby/briefing they have no
+		// playable yet - they keep the reserved slot and get it at game start. Body-less: a reconnecting
+		// player controls nothing until this runs, so without it they would be stuck spectating with
+		// their slot restored but never entered.
+		PS_GameModeCoop gameMode = PS_GameModeCoop.Cast(GetGame().GetGameMode());
+		if (gameMode && gameMode.GetState() == SCR_EGameModeState.GAME && GetPlayableByPlayer(playerId) != RplId.Invalid())
+			ApplyPlayable(playerId);
+	}
+
 	// ------------------------------------- Player state -----------------------------------------
 	// Get current player sloting state. TODO: proper naming
 	// - Synced on clients
@@ -728,26 +824,55 @@ class PS_PlayableManager : ScriptComponent
 		m_mPlayablePrefabs[playableId] = prefab;
 	}
 
-	// ------------------------------------ Playable name -----------------------------------------
-	// Get playable cached name by playable id
-	// - Synced on clients
-	string GetPlayableName(RplId playableId)
+	// ------------------------------- Playable role info (per prefab) ------------------------------
+	// Store role icon/name for a prefab once (dedup). Execute ONLY on server.
+	void SetPrefabRoleInfo(string prefab, string iconPath, string iconQuad, string roleName)
 	{
-		if (!m_mPlayableNames.Contains(playableId))
-			return "";
-		return m_mPlayableNames[playableId];
-	}
-	// Set playable cached name by playable id
-	// - Execute ONLY on server
-	void SetPlayableName(RplId playableId, string name)
-	{
-		Rpc(RPC_SetPlayableName, playableId, name);
-		RPC_SetPlayableName(playableId, name);
+		if (prefab == "" || m_mPrefabRoleName.Contains(prefab))
+			return; // already known for this prefab
+		Rpc(RPC_SetPrefabRoleInfo, prefab, iconPath, iconQuad, roleName);
+		RPC_SetPrefabRoleInfo(prefab, iconPath, iconQuad, roleName);
 	}
 	[RplRpc(RplChannel.Reliable, RplRcver.Broadcast)]
-	protected void RPC_SetPlayableName(RplId playableId, string name)
+	protected void RPC_SetPrefabRoleInfo(string prefab, string iconPath, string iconQuad, string roleName)
 	{
-		m_mPlayableNames[playableId] = name;
+		m_mPrefabRoleIcon[prefab] = iconPath;
+		m_mPrefabRoleQuad[prefab] = iconQuad;
+		m_mPrefabRoleName[prefab] = roleName;
+	}
+	// Get role info for a playable (resolved playable -> prefab -> role info). Synced on clients.
+	string GetPlayableRoleIconPath(RplId playableId)
+	{
+		string prefab = GetPlayablePrefab(playableId);
+		if (!m_mPrefabRoleIcon.Contains(prefab))
+			return "";
+		return m_mPrefabRoleIcon[prefab];
+	}
+	string GetPlayableRoleIconQuad(RplId playableId)
+	{
+		string prefab = GetPlayablePrefab(playableId);
+		if (!m_mPrefabRoleQuad.Contains(prefab))
+			return "";
+		return m_mPrefabRoleQuad[prefab];
+	}
+	string GetPlayableRoleName(RplId playableId)
+	{
+		string prefab = GetPlayablePrefab(playableId);
+		if (!m_mPrefabRoleName.Contains(prefab))
+			return "";
+		return m_mPrefabRoleName[prefab];
+	}
+
+	// ------------------------------------ Playable name -----------------------------------------
+	// Get playable cached name by playable id
+	// - Synced on clients (read from the playable container, which already carries the name -
+	//   a separate replicated name map would duplicate it in every JIP snapshot)
+	string GetPlayableName(RplId playableId)
+	{
+		PS_PlayableContainer container = GetPlayableById(playableId);
+		if (!container)
+			return "";
+		return container.GetName();
 	}
 
 	// ---------------------- playable -> player / player -> playable links -----------------------
@@ -1212,9 +1337,11 @@ class PS_PlayableManager : ScriptComponent
 	override protected bool RplSave(ScriptBitWriter writer)
 	{
 		// Save maps
+		// Note: m_playablePlayers (reverse of m_playersPlayable) and the playable name map
+		// (carried by each container) are intentionally NOT sent - they are reconstructed on load
+		// to keep the JIP snapshot smaller on full servers.
 		PS_ReplicationHelper.WriteMapIntInt(writer, m_playersStates);
 		PS_ReplicationHelper.WriteMapIntRplId(writer, m_playersPlayable);
-		PS_ReplicationHelper.WriteMapRplIdInt(writer, m_playablePlayers);
 		PS_ReplicationHelper.WriteMapIntBool(writer, m_playersPin);
 		PS_ReplicationHelper.WriteMapIntFactionKey(writer, m_playersFaction);
 		PS_ReplicationHelper.WriteMapIntFactionKey(writer, m_playersFactionRemembered);
@@ -1224,7 +1351,18 @@ class PS_PlayableManager : ScriptComponent
 		PS_ReplicationHelper.WriteMapRplIdInt(writer, m_playablePlayersRemembered);
 		PS_ReplicationHelper.WriteMapFactionKeyInt(writer, m_mFactionReady);
 		PS_ReplicationHelper.WriteMapRplIdString(writer, m_mPlayablePrefabs);
-		PS_ReplicationHelper.WriteMapRplIdString(writer, m_mPlayableNames);
+
+		// Save per-prefab role info (deduplicated icon/quad/name)
+		int roleCount = m_mPrefabRoleName.Count();
+		writer.WriteInt(roleCount);
+		for (int i = 0; i < roleCount; i++)
+		{
+			string prefab = m_mPrefabRoleName.GetKey(i);
+			writer.WriteString(prefab);
+			writer.WriteString(m_mPrefabRoleIcon[prefab]);
+			writer.WriteString(m_mPrefabRoleQuad[prefab]);
+			writer.WriteString(m_mPrefabRoleName[prefab]);
+		}
 
 		// Save containers
 		int playablesCount = m_aPlayables.Count();
@@ -1241,16 +1379,22 @@ class PS_PlayableManager : ScriptComponent
 			container.Save(writer);
 		}
 
+		// [PS_NetStat] JIP snapshot composition - logged on the SERVER each time a client joins, so it shows
+		// the real per-join lobby payload at live player counts (the prime lobby-kick suspect). The whole
+		// blob is sent to the joining client in one burst; watch this when lobby-stage kicks happen.
+		if (PS_NetStat.s_bEnabled)
+			Print(string.Format("[PS_NetStat][SERVER] JIP snapshot: playables=%1 vehicles=%2 states=%3 factions=%4 groups=%5 names=%6 roleDefs=%7",
+				playablesCount, playableVehiclessCount, m_playersStates.Count(), m_playersFaction.Count(), m_playablePlayerGroupId.Count(), m_playersLastName.Count(), roleCount), LogLevel.NORMAL);
+
 		return true;
 	}
 
 	// --------------------------------------------------------------------------------------------
 	override protected bool RplLoad(ScriptBitReader reader)
 	{
-		// Load maps
+		// Load maps (must match RplSave order)
 		PS_ReplicationHelper.ReadMapIntInt(reader, m_playersStates);
 		PS_ReplicationHelper.ReadMapIntRplId(reader, m_playersPlayable);
-		PS_ReplicationHelper.ReadMapRplIdInt(reader, m_playablePlayers);
 		PS_ReplicationHelper.ReadMapIntBool(reader, m_playersPin);
 		PS_ReplicationHelper.ReadMapIntFactionKey(reader, m_playersFaction);
 		PS_ReplicationHelper.ReadMapIntFactionKey(reader, m_playersFactionRemembered);
@@ -1260,7 +1404,26 @@ class PS_PlayableManager : ScriptComponent
 		PS_ReplicationHelper.ReadMapRplIdInt(reader, m_playablePlayersRemembered);
 		PS_ReplicationHelper.ReadMapFactionKeyInt(reader, m_mFactionReady);
 		PS_ReplicationHelper.ReadMapRplIdString(reader, m_mPlayablePrefabs);
-		PS_ReplicationHelper.ReadMapRplIdString(reader, m_mPlayableNames);
+
+		// Load per-prefab role info (deduplicated icon/quad/name)
+		int roleCount;
+		reader.ReadInt(roleCount);
+		for (int i = 0; i < roleCount; i++)
+		{
+			string prefab, icon, quad, name;
+			reader.ReadString(prefab);
+			reader.ReadString(icon);
+			reader.ReadString(quad);
+			reader.ReadString(name);
+			m_mPrefabRoleIcon[prefab] = icon;
+			m_mPrefabRoleQuad[prefab] = quad;
+			m_mPrefabRoleName[prefab] = name;
+		}
+
+		// Reconstruct the reverse player<->playable map instead of replicating it
+		m_playablePlayers.Clear();
+		foreach (int playerId, RplId playableId : m_playersPlayable)
+			m_playablePlayers[playableId] = playerId;
 
 		// Load containers
 		int playablesCount;

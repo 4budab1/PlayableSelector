@@ -58,28 +58,26 @@ class PS_PlayerVoiceSelector : SCR_ButtonComponent
 		string playerName = playableManager.GetPlayerName(m_iPlayerId);
 		SCR_Faction faction = SCR_Faction.Cast(factionManager.GetFactionByKey(factionKey));
 		EPlayerRole playerRole = playerManager.GetPlayerRoles(m_iPlayerId);
-		int playerRoomId = VoNRoomsManager.GetPlayerRoom(m_iPlayerId);
-		string playerRoom = VoNRoomsManager.GetRoomName(playerRoomId);
+		string playerRoom = VoNRoomsManager.GetPlayerChannel(m_iPlayerId);
 		int groupCallSign = playableManager.GetGroupCallsignByPlayable(playableId);
-		 
+
 		// current player
 		PlayerController currentPlayerController = GetGame().GetPlayerController();
 		int currentPlayerId = currentPlayerController.GetPlayerId();
 		EPlayerRole currentPlayerRole = playerManager.GetPlayerRoles(currentPlayerController.GetPlayerId());
 		PS_PlayableControllerComponent currentPlayableController = PS_PlayableControllerComponent.Cast(currentPlayerController.FindComponent(PS_PlayableControllerComponent));
-		int currentPlayerRoomId = VoNRoomsManager.GetPlayerRoom(currentPlayerId);
-		string currentPlayerRoom = VoNRoomsManager.GetRoomName(currentPlayerRoomId);
+		string currentPlayerRoom = VoNRoomsManager.GetPlayerChannel(currentPlayerId);
 		int currentGroupCallSign = playableManager.GetGroupCallsignByPlayable(m_iPlayerId);
-				
+
 		// update
 		if (playerName != "") m_wPlayerName.SetText(playerName);
 		//m_wVoiceHideableButton.Update();
 		m_wLeaderIcon.SetVisible(playableManager.IsPlayerGroupLeader(m_iPlayerId));
 		if (faction) m_wCharacterFactionColor.SetColor(faction.GetFactionColor());
 		else m_wCharacterFactionColor.SetColor(Color.FromInt(0xFF2c2c2c));
-		
+
 		bool showKick = PS_PlayersHelper.IsAdminOrServer();
-		if (playerRoomId == currentPlayerRoomId) {
+		if (playerRoom == currentPlayerRoom) {
 			if (currentPlayerRoom.Contains(currentGroupCallSign.ToString())) {
 				if (!showKick) showKick = groupCallSign != currentGroupCallSign;
 			}
@@ -191,21 +189,19 @@ class PS_PlayerVoiceSelector : SCR_ButtonComponent
 		//string playerName = playableManager.GetPlayerName(m_iPlayerId);
 		SCR_Faction faction = SCR_Faction.Cast(factionManager.GetFactionByKey(factionKey));
 		EPlayerRole playerRole = playerManager.GetPlayerRoles(m_iPlayerId);
-		int playerRoomId = VoNRoomsManager.GetPlayerRoom(m_iPlayerId);
-		string playerRoom = VoNRoomsManager.GetRoomName(playerRoomId);
+		string playerRoom = VoNRoomsManager.GetPlayerChannel(m_iPlayerId);
 		int groupCallSign = playableManager.GetGroupCallsignByPlayable(playableId);
-		
+
 		// current player
 		PlayerController currentPlayerController = GetGame().GetPlayerController();
 		int currentPlayerId = currentPlayerController.GetPlayerId();
 		EPlayerRole currentPlayerRole = playerManager.GetPlayerRoles(currentPlayerController.GetPlayerId());
 		PS_PlayableControllerComponent currentPlayableController = PS_PlayableControllerComponent.Cast(currentPlayerController.FindComponent(PS_PlayableControllerComponent));
-		int currentPlayerRoomId = VoNRoomsManager.GetPlayerRoom(currentPlayerId);
-		string currentPlayerRoom = VoNRoomsManager.GetRoomName(currentPlayerRoomId);
+		string currentPlayerRoom = VoNRoomsManager.GetPlayerChannel(currentPlayerId);
 		int currentGroupCallSign = playableManager.GetGroupCallsignByPlayable(m_iPlayerId);
-		
+
 		bool showKick = PS_PlayersHelper.IsAdminOrServer();
-		if (playerRoomId == currentPlayerRoomId) {
+		if (playerRoom == currentPlayerRoom) {
 			if (currentPlayerRoom.Contains(currentGroupCallSign.ToString())) {
 				if (!showKick) showKick = groupCallSign != currentGroupCallSign;
 			}

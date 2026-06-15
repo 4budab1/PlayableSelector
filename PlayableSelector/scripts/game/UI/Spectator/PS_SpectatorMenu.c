@@ -82,17 +82,40 @@ class PS_SpectatorMenu: MenuBase
 	bool SetCameraCharacter(RplId rplId)
 	{
 		RplComponent rplComponent = RplComponent.Cast(Replication.FindItem(rplId));
-		if (!rplComponent)
-			return false;
-		IEntity characterEntity = rplComponent.GetEntity();
+		IEntity characterEntity;
+		if (rplComponent)
+			characterEntity = rplComponent.GetEntity();
+
+		// Friendly-only gate first - it reads the replicated PlayableManager, so it applies even when the
+		// target entity itself is not streamed to this client.
 		if (m_GameMode.GetFriendliesSpectatorOnly())
 		{
 			PS_PlayableContainer playableContainer = m_PlayableManager.GetPlayableById(rplId);
-			FactionKey playableFactionKey = playableContainer.GetFactionKey();
-			FactionKey lastPlayerFaction = m_PlayableManager.GetPlayerFactionKeyRemembered(GetGame().GetPlayerController().GetPlayerId());
-			if (playableFactionKey != lastPlayerFaction)
-				return false;
+			if (playableContainer)
+			{
+				FactionKey playableFactionKey = playableContainer.GetFactionKey();
+				FactionKey lastPlayerFaction = m_PlayableManager.GetPlayerFactionKeyRemembered(GetGame().GetPlayerController().GetPlayerId());
+				if (playableFactionKey != lastPlayerFaction)
+					return false;
+			}
 		}
+
+		// Outside this client's replication pool (default NDS culling): no local entity to follow. Ask the
+		// server for the player's coordinates and fly the spectator camera there instead (see
+		// PS_PlayableControllerComponent.RequestSpectatePosition). Click again once they stream in for the
+		// normal first-person follow.
+		if (!characterEntity)
+		{
+			SCR_PlayerController playerController = SCR_PlayerController.Cast(GetGame().GetPlayerController());
+			if (playerController)
+			{
+				PS_PlayableControllerComponent controller = playerController.PS_GetPLayableComponent();
+				if (controller)
+					controller.RequestSpectatePosition(rplId);
+			}
+			return false;
+		}
+
 		PS_ManualCameraSpectator camera = PS_ManualCameraSpectator.Cast(GetGame().GetCameraManager().CurrentCamera());
 		if (camera)
 			if (m_GameMode.GetFriendliesSpectatorOnly())
