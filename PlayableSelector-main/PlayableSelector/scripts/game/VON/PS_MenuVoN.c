@@ -249,6 +249,41 @@ class PS_MenuVoN
 	}
 
 	// =====================================================================
+	// RECEIVE RE-ARM (follow the channel)
+	// =====================================================================
+
+	// Re-point the LOCAL player's menu-voice RECEPTION at their proxy transceiver after a room change.
+	// Reception is armed once in Activate() (SetTransmitRadio) and otherwise stays on whatever room was active
+	// then - so after moving rooms a player keeps HEARING the old (often the Global connect) channel while their
+	// transmit correctly follows the new one. PS_VoNRoomsManager.ApplyRadioKeyNow calls this for the local
+	// player right after it re-tunes the transceiver, so listening follows the channel the same way talking does.
+	static void PS_ReapplyReceive(BaseTransceiver tsv)
+	{
+		if (s_Instance)
+			s_Instance.ReapplyReceiveInternal(tsv);
+	}
+	protected void ReapplyReceiveInternal(BaseTransceiver tsv)
+	{
+		if (!m_bActive || !m_VoNComp || !tsv)
+			return;
+		// Safety: only re-arm while still bound to the local player's CURRENT proxy. After a reconnect/respawn
+		// the binding can be stale (old, destroyed proxy); RefreshInternal's reconnect guard re-acquires that
+		// case, so skip here rather than touch a dead component.
+		PlayerController pc = GetGame().GetPlayerController();
+		if (!pc)
+			return;
+		IEntity proxy = PS_VoNProxyComponent.GetProxyEntity(pc.GetPlayerId());
+		if (!proxy)
+			return;
+		SCR_VoNComponent currentVonComp = SCR_VoNComponent.Cast(proxy.FindComponent(SCR_VoNComponent));
+		if (currentVonComp != m_VoNComp)
+			return;
+		m_Transceiver = tsv; // keep in sync with the proxy's freshly-tuned transceiver
+		m_VoNComp.SetCommMethod(ECommMethod.SQUAD_RADIO);
+		m_VoNComp.SetTransmitRadio(tsv);
+	}
+
+	// =====================================================================
 	// PRESS-TO-TALK
 	// =====================================================================
 

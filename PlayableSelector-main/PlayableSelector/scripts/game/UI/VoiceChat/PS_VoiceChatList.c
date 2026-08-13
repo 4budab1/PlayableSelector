@@ -49,17 +49,18 @@ class PS_VoiceChatList : SCR_ScriptedWidgetComponent
 		GetGame().GetCallqueue().CallLater(UpdateInfo, 100, true);
 	}
 
-	void ~PS_VoiceChatList()
+	// FIX (TIMER LEAK + VME): HandlerDeattached fires when the widget is removed from the
+	// hierarchy (menu close, server restart). All cleanup must happen HERE, not in the
+	// destructor (~PS_VoiceChatList), because the GC may collect the object AFTER the
+	// game context and singletons (GetGame(), m_gVoNRoomsManager) have already been
+	// destroyed, causing VME crashes on m_eOnRoomChanged.Remove(MovePlayer).
+	override void HandlerDeattached(Widget w)
 	{
-		if (!GetGame().InPlayMode())
-			return;
+		super.HandlerDeattached(w);
+		GetGame().GetCallqueue().Remove(UpdateInfo);
 
-		if (!m_gVoNRoomsManager)
-			return;
-		if (!m_gVoNRoomsManager.m_eOnRoomChanged)
-			return;
-
-		m_gVoNRoomsManager.m_eOnRoomChanged.Remove(MovePlayer);
+		if (m_gVoNRoomsManager)
+			m_gVoNRoomsManager.m_eOnRoomChanged.Remove(MovePlayer);
 	}
 
 	// -------------------- Update content functions --------------------
@@ -230,8 +231,8 @@ class PS_VoiceChatList : SCR_ScriptedWidgetComponent
 
 				if (currentPlayerFactionKey != factionKey) continue; // not our faction, skip
 
-				int groupCallSign = playableManager.GetGroupCallsignByPlayable(playable.GetRplId());
-				string groupRoom = VoNRoomsManager.GetRoomWithFaction(currentPlayerFactionKey, groupCallSign.ToString());
+				// Group VoN channel is keyed by the unique group id below (GetGroupVonRoomName), not the colliding callsign num.
+				string groupRoom = VoNRoomsManager.GetRoomWithFaction(currentPlayerFactionKey, playableManager.GetGroupVonRoomName(playable.GetRplId()));
 				if (!outRoomsArray.Contains(groupRoom))
 					outRoomsArray.Insert(groupRoom);
 			}
@@ -249,18 +250,16 @@ class PS_VoiceChatList : SCR_ScriptedWidgetComponent
 					outRoomsArray.Insert(channelKey);
 			}
 		} else {
-			// For briefing only command and my group
+			// Briefing: the command (HQ) channel + EVERY group channel of your faction, so any member can
+			// SEE and join other same-faction squads. Previously only group leaders saw all groups while
+			// members saw only their own - now everyone on a faction sees the whole faction's squad channels.
 			if (currentPlayerFactionKey != "")
 			{
-				// Channel for commanders
+				// Channel for commanders (HQ)
 				string commandRoom = VoNRoomsManager.GetRoomWithFaction(currentPlayerFactionKey, "#PS-VoNRoom_Command");
 				outRoomsArray.Insert(commandRoom);
-			}
 
-			if (playableManager.IsPlayerGroupLeader(currentPlayerId))
-			{
-				// TODO: separate to method
-				// Channel for each group
+				// Channel for each group of our faction
 				array<PS_PlayableContainer> playables = playableManager.GetPlayablesSorted();
 				for (int i = 0; i < playables.Count(); i++) {
 					PS_PlayableContainer playable = playables[i];
@@ -268,19 +267,10 @@ class PS_VoiceChatList : SCR_ScriptedWidgetComponent
 
 					if (currentPlayerFactionKey != factionKey) continue; // not our faction, skip
 
-					int groupCallSign = playableManager.GetGroupCallsignByPlayable(playable.GetRplId());
-					string groupRoom = VoNRoomsManager.GetRoomWithFaction(currentPlayerFactionKey, groupCallSign.ToString());
+					// Group VoN channel is keyed by the unique group id below (GetGroupVonRoomName), not the colliding callsign num.
+					string groupRoom = VoNRoomsManager.GetRoomWithFaction(currentPlayerFactionKey, playableManager.GetGroupVonRoomName(playable.GetRplId()));
 					if (!outRoomsArray.Contains(groupRoom))
 						outRoomsArray.Insert(groupRoom);
-				}
-			} else {
-				RplId playableId = playableManager.GetPlayableByPlayer(currentPlayerId);
-				if (playableId != RplId.Invalid())
-				{
-					PS_PlayableContainer playable = playableManager.GetPlayableById(playableId);
-					int groupCallSign = playableManager.GetGroupCallsignByPlayable(playable.GetRplId());
-					string groupRoom = VoNRoomsManager.GetRoomWithFaction(currentPlayerFactionKey, groupCallSign.ToString());
-					outRoomsArray.Insert(groupRoom);
 				}
 			}
 		}

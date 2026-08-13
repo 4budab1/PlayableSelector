@@ -226,7 +226,6 @@ if (m_PlayableManager)
 	{
 		array<PS_PlayableContainer> playables = m_PlayableManager.GetPlayablesSorted();
 		map<RplId, ref PS_PlayableVehicleContainer> playableVehicles = m_PlayableManager.GetPlayableVehicles();
-		map<SCR_Faction, ref Tuple3<int, int, int>> factions = new map<SCR_Faction, ref Tuple3<int, int, int>>();
 		
 		foreach (PS_PlayableContainer playable : playables)
 		{
@@ -242,26 +241,12 @@ if (m_PlayableManager)
 				playerAddedLocked = 1;
 			
 			SCR_Faction faction = playable.GetFaction();
-			if (!factions.Contains(faction))
-				//DRG_BUG
-				factions.Insert(faction, new Tuple3<int, int, int>(playerAdded, playerAddedMax, playerAddedLocked));
-			else
-			{
-				Tuple3<int, int, int> tuple = factions.Get(faction);
-				tuple.param1 += playerAdded;
-				tuple.param2 += playerAddedMax;
-				tuple.param3 += playerAddedLocked;
-			}
+			AddFactionCount(faction, playerAdded, playerAddedMax, playerAddedLocked);
 		}
 		
 		foreach (RplId rplId, PS_PlayableVehicleContainer playableVehicleContainer : playableVehicles)
 		{
 			AddPlayableVehicle(playableVehicleContainer);
-		}
-		
-		foreach (SCR_Faction faction, Tuple3<int, int, int> count : factions)
-		{
-			AddFaction(faction, count.param1, count.param2, count.param3);
 		}
 		
 		// Added in runtime
@@ -418,7 +403,12 @@ if (m_PlayableManager)
 	
 	void OnRolesGroupRemoved(PS_RolesGroup rolesGroup)
 	{
-		m_mGroups.Remove(m_mGroups.GetKeyByValue(rolesGroup));
+		SCR_AIGroup targetKey = null;
+		foreach (SCR_AIGroup aiGroup, PS_RolesGroup rGroup : m_mGroups)
+		{
+			if (rGroup == rolesGroup) { targetKey = aiGroup; break; }
+		}
+		m_mGroups.Remove(targetKey);
 	}
 	
 	void OnPlayableRemoved(PS_PlayableContainer playable)

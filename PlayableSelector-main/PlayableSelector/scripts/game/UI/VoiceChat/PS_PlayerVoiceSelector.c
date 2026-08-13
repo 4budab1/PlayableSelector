@@ -231,13 +231,21 @@ class PS_PlayerVoiceSelector : SCR_ButtonComponent
 		EPlayerRole currentPlayerRole = playerManager.GetPlayerRoles(currentPlayerController.GetPlayerId());
 		PS_PlayableControllerComponent currentPlayableController = PS_PlayableControllerComponent.Cast(currentPlayerController.FindComponent(PS_PlayableControllerComponent));
 		
+		int targetPlayerId = contextActionDataPlayer.GetPlayerId();
+		FactionKey targetFactionKey = "";
+		RplId targetPlayableId = playableManager.GetPlayableByPlayer(targetPlayerId);
+		PS_PlayableContainer targetSlot = playableManager.GetPlayableById(targetPlayableId);
+		if (targetSlot && targetSlot.GetFactionKey() != "")
+			targetFactionKey = targetSlot.GetFactionKey();
+		if (targetFactionKey == "")
+			targetFactionKey = playableManager.GetPlayerFactionKey(targetPlayerId);
+
 		if (gameState == SCR_EGameModeState.BRIEFING)
 		{
-			RplId playableId = playableManager.GetPlayableByPlayer(contextActionDataPlayer.GetPlayerId());
-			string groupName = playableManager.GetGroupCallsignByPlayable(playableId).ToString();
-			currentPlayableController.MoveToVoNRoom(contextActionDataPlayer.GetPlayerId(), playableManager.GetPlayerFactionKey(contextActionDataPlayer.GetPlayerId()), groupName);
+			string groupName = playableManager.GetGroupVonRoomName(targetPlayableId);
+			currentPlayableController.MoveToVoNRoom(targetPlayerId, targetFactionKey, groupName);
 		} else {
-			currentPlayableController.MoveToVoNRoom(contextActionDataPlayer.GetPlayerId(), playableManager.GetPlayerFactionKey(contextActionDataPlayer.GetPlayerId()), "#PS-VoNRoom_Faction");
+			currentPlayableController.MoveToVoNRoom(targetPlayerId, targetFactionKey, "#PS-VoNRoom_Faction");
 		}
 	}
 	

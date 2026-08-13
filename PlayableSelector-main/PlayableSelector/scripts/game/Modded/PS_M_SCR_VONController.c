@@ -48,4 +48,20 @@ modded class SCR_VONController
 	{
 		UpdateSystemState();
 	}
+
+	// PS_MenuVoN detaches the controller's VoN component (SetVONComponent(null)) while the body-less
+	// menu device owns voice. On possession the gadget manager registers the new character's radio VoN
+	// entries (OnControlledByPlayer -> RegisterVONEntries -> ... -> SetActiveTransmit) BEFORE the
+	// controller's own OnControlledEntityChanged re-acquires the component, so vanilla SetActiveTransmit
+	// dereferences a null m_VONComp = a VME every menu->character possession. Re-acquire it from the
+	// now-controlled character here so the entry registers correctly this frame; if there is still
+	// nothing to transmit on, skip (next frame self-heals) instead of throwing.
+	override protected void SetActiveTransmit(notnull SCR_VONEntry entry)
+	{
+		if (!GetVONComponent())
+			AssignVONComponent();
+		if (!GetVONComponent())
+			return;
+		super.SetActiveTransmit(entry);
+	}
 }
