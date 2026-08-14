@@ -21,6 +21,9 @@ modded class SCR_VoNComponent
 	// without any "ended" event — talking ends when no packet arrived for this long.
 	protected static const int PS_TALK_TIMEOUT_MS = 400;
 
+	// FIX (1.8) diagnostic throttle: world-time of the last [PS_VoNLoc] log (1/s max).
+	protected static float s_fLastLocLog = -1;
+
 	// playerId -> world time (ms) after which the player counts as silent.
 	protected static ref map<int, float> s_mPSTalkUntil = new map<int, float>();
 
@@ -108,13 +111,52 @@ modded class SCR_VoNComponent
 		if (editor && super.IsEntityActiveEditor(editor))
 			return super.GetEditorWorldLocation(playerId);
 
-		// Menu speakers speak from their proxy — proxies are spread out so one
-		// channel's proximity speech cannot bleed into another's.
 		IEntity proxy = PS_VoNProxyComponent.GetProxyEntity(playerId);
-		if (proxy)
-			return proxy.GetOrigin();
+		if (!proxy)
+			return vector.Zero;
 
-		return vector.Zero;
+		// FIX (1.8): the reworked engine VoN places / culls incoming editor-voice audio by
+		// this location. The proxies sit at 10km altitude (spread out so one channel's
+		// proximity speech cannot bleed into another's), so without this a RECEIVING client
+		// would place every remote menu/spectator transmission 10km from the listener's ear
+		// = inaudible (the "no voice outside a playable character since 1.8" report — in-game
+		// character voice still works because it never goes through this editor path). For a
+		// REMOTE sender on a client machine, report the LOCAL listener's ear position
+		// (controlled entity, else camera) so the audio lands at the listener the same way
+		// vanilla radio voice does. The local player's own id and the dedicated server keep
+		// reporting the sender's proxy (entity-consistent) as before.
+		if (RplSession.Mode() != RplMode.Dedicated)
+		{
+			PlayerController localPc = GetGame().GetPlayerController();
+			if (localPc && localPc.GetPlayerId() > 0 && localPc.GetPlayerId() != playerId)
+			{
+				IEntity controlled = localPc.GetControlledEntity();
+				if (controlled)
+				{
+					if (PS_VoNRoomsManager.s_bVoNDebug && GetGame().GetWorld().GetWorldTime() - s_fLastLocLog > 1000)
+					{
+						s_fLastLocLog = GetGame().GetWorld().GetWorldTime();
+						PrintFormat("[PS_VoNLoc] GetEditorWorldLocation player=%1 -> LOCAL controlled entity at %2", playerId, controlled.GetOrigin());
+					}
+					return controlled.GetOrigin();
+				}
+
+				CameraBase cam = GetGame().GetCameraManager().CurrentCamera();
+				if (cam)
+				{
+					vector mat[4];
+					cam.GetWorldCameraTransform(mat);
+					if (PS_VoNRoomsManager.s_bVoNDebug && GetGame().GetWorld().GetWorldTime() - s_fLastLocLog > 1000)
+					{
+						s_fLastLocLog = GetGame().GetWorld().GetWorldTime();
+						PrintFormat("[PS_VoNLoc] GetEditorWorldLocation player=%1 -> LOCAL camera at %2", playerId, mat[3]);
+					}
+					return mat[3];
+				}
+			}
+		}
+
+		return proxy.GetOrigin();
 	}
 
 	override bool IsEntityActiveEditor(IEntity entity)
@@ -164,6 +206,12 @@ modded class SCR_VoNComponent
 
 		if (!wasTalking)
 		{
+			// FIX (1.8) diagnostic: a state change means the engine actually routed a
+			// transmission to/from this component. On the receiving side, "talking START"
+			// for a REMOTE player proves the audio reached this client (then any silence is
+			// playback placement); if it never logs, the server is not delivering at all.
+			if (PS_VoNRoomsManager.s_bVoNDebug)
+				PrintFormat("[PS_VoNHear] talking START player=%1", playerId);
 			s_OnPSTalkingChanged.Invoke(playerId, true);
 			GetGame().GetCallqueue().CallLater(PS_CheckTalkEnd, PS_TALK_TIMEOUT_MS, false, playerId);
 		}
